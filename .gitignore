@@ -8,9 +8,17 @@ changez.log
 config.yaml
 data/
 
+# OpenCode
+.opencode/
+
 # IDE
 .vscode/
 .idea/
+*.swp
+*~
+
+# Environment
+.env
 
 # OS
 .DS_Store
