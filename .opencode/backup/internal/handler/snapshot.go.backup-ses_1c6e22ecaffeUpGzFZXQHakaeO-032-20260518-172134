@@ -1,0 +1,521 @@
+package handler
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strings"
+
+	"github.com/sergi/go-diff/diffmatchpatch"
+
+	"github.com/changez/changez/internal/storage"
+)
+
+type SnapshotRequest struct {
+	Source    string         `json:"source"`
+	SessionID string         `json:"sessionId,omitempty"`
+	Model     string         `json:"model,omitempty"`
+	Files     []SnapshotFile `json:"files"`
+}
+
+type SnapshotFile struct {
+	Path    string `json:"path"`
+	Content string `json:"content,omitempty"`
+	Action  string `json:"action,omitempty"`
+	Message string `json:"message,omitempty"`
+}
+
+type SnapshotResult struct {
+	Path      string `json:"path"`
+	Status    string `json:"status"`
+	VersionID *int64 `json:"versionId,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+type SnapshotResponse struct {
+	Results []SnapshotResult `json:"results"`
+	Summary SnapshotSummary  `json:"summary"`
+}
+
+type SnapshotSummary struct {
+	Captured  int `json:"captured"`
+	Unchanged int `json:"unchanged"`
+	Errors    int `json:"errors"`
+}
+
+
+func (h *Handler) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "仅支持 POST")
+		return
+	}
+
+	var req SnapshotRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", fmt.Sprintf("请求体解析失败: %v", err))
+		return
+	}
+
+	sourceID, ok := h.SourceIDs[req.Source]
+	if !ok {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", fmt.Sprintf("不支持的 source: %s", req.Source))
+		return
+	}
+
+	if len(req.Files) == 0 {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "files 不能为空")
+		return
+	}
+
+	h.Logger.Info("snapshot request",
+		"file_count", len(req.Files),
+		"source", req.Source,
+		"session_id", req.SessionID,
+		"model", req.Model,
+	)
+
+	results := make([]SnapshotResult, len(req.Files))
+	summary := SnapshotSummary{}
+
+	dmp := diffmatchpatch.New()
+
+	for i, sf := range req.Files {
+		// 校验 path
+		if sf.Path == "" {
+			results[i] = SnapshotResult{Path: sf.Path, Status: "error", Reason: "path 不能为空"}
+			summary.Errors++
+			continue
+		}
+
+		// 1. 根据 path 匹配 project（最长前缀匹配）
+		project, err := h.DB.FindProjectByPath(sf.Path)
+		if err != nil {
+			h.Logger.Warn("project not found for path", "path", sf.Path, "error", err)
+			results[i] = SnapshotResult{Path: sf.Path, Status: "error", Reason: err.Error()}
+			summary.Errors++
+			continue
+		}
+
+		// 计算相对路径
+		relPath := sf.Path
+		rootPath := project["rootPath"].(string)
+		if len(sf.Path) > len(rootPath) && sf.Path[:len(rootPath)] == rootPath {
+			relPath = strings.TrimPrefix(sf.Path[len(rootPath):], "/")
+		}
+
+		// 2. upsert 文件记录
+		fileID, err := h.DB.UpsertFile(project["id"].(int64), relPath)
+		if err != nil {
+			results[i] = SnapshotResult{Path: sf.Path, Status: "error", Reason: fmt.Sprintf("文件注册失败: %v", err)}
+			summary.Errors++
+			continue
+		}
+
+		// 3. 加 per-file 排他锁
+		fileMu := h.getFileLock(fileID)
+		fileMu.Lock()
+
+		func() {
+			defer fileMu.Unlock()
+
+			// 4. 查最新版本
+			latestVer, err := h.DB.GetLatestVersion(fileID)
+			if err != nil {
+				results[i] = SnapshotResult{Path: sf.Path, Status: "error", Reason: fmt.Sprintf("查询最新版本失败: %v", err)}
+				summary.Errors++
+				return
+			}
+
+			// 5. action 双重判断
+			action := strings.ToLower(sf.Action)
+			switch action {
+			case "create", "update", "delete":
+				// 客户端指定了 action，服务端校验修正
+				if action == "create" && latestVer != nil {
+					// 已存在 → 当作 update
+					action = "update"
+				}
+				if action == "update" && latestVer == nil {
+					// 不存在 → 当作 create
+					action = "create"
+				}
+			default:
+				// 未指定 → 根据历史自动判断
+				if latestVer == nil {
+					action = "create"
+				} else {
+					action = "update"
+				}
+			}
+
+			// delete action 特殊处理
+			if action == "delete" {
+				if latestVer == nil {
+					results[i] = SnapshotResult{Path: sf.Path, Status: "error", Reason: "文件无版本记录，无法删除"}
+					summary.Errors++
+					return
+				}
+
+				// 如果最新版已是 delete，返回 unchanged
+				if latestVer["action"].(string) == "delete" {
+					h.Logger.Debug("unchanged (already deleted)", "path", sf.Path)
+					results[i] = SnapshotResult{Path: sf.Path, Status: "unchanged"}
+					summary.Unchanged++
+					return
+				}
+
+			// 写入 delete 版本：继承上一版本的 storage_mode/blob_hash/delta_offset
+			baseVerID := latestVer["id"].(int64)
+			versionID, err := h.DB.CreateVersion(
+				fileID,
+				"delete",
+				nil,  // blob_hash 不存储
+				nil,  // delta_offset 不存储
+				&baseVerID,
+				"delete",
+				sourceID,
+			)
+				if err != nil {
+					results[i] = SnapshotResult{Path: sf.Path, Status: "error", Reason: fmt.Sprintf("写入删除版本失败: %v", err)}
+					summary.Errors++
+					return
+				}
+
+				// 更新 latest_version_id
+				if err := h.DB.UpdateLatestVersion(fileID, versionID); err != nil {
+					results[i] = SnapshotResult{Path: sf.Path, Status: "error", Reason: fmt.Sprintf("更新 latest_version 失败: %v", err)}
+					summary.Errors++
+					return
+				}
+
+				results[i] = SnapshotResult{Path: sf.Path, Status: "captured", VersionID: &versionID}
+				summary.Captured++
+				return
+			}
+
+			// create/update：校验 content
+			content := sf.Content
+			if int64(len(content)) > h.Config.Storage.MaxFileSize {
+				results[i] = SnapshotResult{Path: sf.Path, Status: "error", Reason: fmt.Sprintf("文件大小 %d 超过限制 %d", len(content), h.Config.Storage.MaxFileSize)}
+				summary.Errors++
+				return
+			}
+
+			contentBytes := []byte(content)
+			contentHash := storage.ContentHash(contentBytes)
+
+			// 6. 幂等性检查：与最新版本 hash 对比
+			if latestVer != nil {
+				// 先获取上一版本的 hash 或内容
+				var prevHash string
+				if latestVer["storageMode"].(string) == "blob" {
+					if h := latestVer["blobHash"]; h != nil {
+						prevHash = *(h.(*string))
+					}
+				} else if latestVer["storageMode"].(string) == "delta" {
+					// delta 模式需要重建内容再计算 hash
+					// 但这次我们可以直接计算 content hash 后跟重建的内容比较
+					// 为避免重复工作，直接在重建后比较
+				}
+
+				// blob 模式且 hash 相同 → unchanged
+				if latestVer["storageMode"].(string) == "blob" && prevHash == contentHash {
+					h.Logger.Debug("unchanged (blob hash match)", "path", sf.Path, "hash", contentHash)
+					results[i] = SnapshotResult{Path: sf.Path, Status: "unchanged"}
+					summary.Unchanged++
+					return
+				}
+
+				// delta 模式：需要重建上一版本内容比较 hash
+				if latestVer["storageMode"].(string) == "delta" || latestVer["storageMode"].(string) == "blob" {
+					prevContent, err := h.rebuildContent(latestVer)
+					if err != nil {
+						results[i] = SnapshotResult{Path: sf.Path, Status: "error", Reason: fmt.Sprintf("重建上一版本内容失败: %v", err)}
+						summary.Errors++
+						return
+					}
+	prevHashCheck := sha256.Sum256(prevContent)
+				if hex.EncodeToString(prevHashCheck[:]) == contentHash {
+					h.Logger.Debug("unchanged (delta content match)", "path", sf.Path, "hash", contentHash)
+					results[i] = SnapshotResult{Path: sf.Path, Status: "unchanged"}
+					summary.Unchanged++
+					return
+				}
+				}
+			}
+
+			// 7. 首次创建：存完整 blob
+			if latestVer == nil {
+				hash, err := h.BlobStore.Store(contentBytes)
+				if err != nil {
+					results[i] = SnapshotResult{Path: sf.Path, Status: "error", Reason: fmt.Sprintf("存储 blob 失败: %v", err)}
+					summary.Errors++
+					return
+				}
+
+				// 写入 versions 表
+				versionID, err := h.DB.CreateVersion(
+					fileID,
+					"blob",
+					&hash,
+					nil, // delta_offset
+					nil, // base_id（首次）
+					action,
+					sourceID,
+				)
+				if err != nil {
+					results[i] = SnapshotResult{Path: sf.Path, Status: "error", Reason: fmt.Sprintf("写入版本记录失败: %v", err)}
+					summary.Errors++
+					return
+				}
+
+				// 更新 latest_version_id
+				if err := h.DB.UpdateLatestVersion(fileID, versionID); err != nil {
+					results[i] = SnapshotResult{Path: sf.Path, Status: "error", Reason: fmt.Sprintf("更新 latest_version 失败: %v", err)}
+					summary.Errors++
+					return
+				}
+
+				results[i] = SnapshotResult{Path: sf.Path, Status: "captured", VersionID: &versionID}
+				summary.Captured++
+				return
+			}
+
+			// 8. 有历史：生成 delta
+			// 重建上一版本完整内容
+			prevContent, err := h.rebuildContent(latestVer)
+			if err != nil {
+				results[i] = SnapshotResult{Path: sf.Path, Status: "error", Reason: fmt.Sprintf("重建上一版本内容失败: %v", err)}
+				summary.Errors++
+				return
+			}
+
+			// DiffMain 生成 []Diff
+			diffs := dmp.DiffMain(string(prevContent), content, true)
+			diffs = dmp.DiffCleanupSemantic(diffs)
+
+			// 构建 metadata
+			var meta *storage.DeltaMeta
+			if req.SessionID != "" || req.Model != "" || sf.Message != "" {
+				meta = &storage.DeltaMeta{
+					SessionID: req.SessionID,
+					Model:     req.Model,
+					Message:   sf.Message,
+				}
+			}
+
+			// 先创建版本记录（delta_offset=0 占位），获取版本 ID
+			baseID := latestVer["id"].(int64)
+			zeroOffset := int64(0)
+			versionID, err := h.DB.CreateVersion(
+				fileID,
+				"delta",
+				nil,
+				&zeroOffset,
+				&baseID,
+				action,
+				sourceID,
+			)
+			if err != nil {
+				results[i] = SnapshotResult{Path: sf.Path, Status: "error", Reason: fmt.Sprintf("写入版本记录失败: %v", err)}
+				summary.Errors++
+				return
+			}
+
+			// 追加 delta entry（使用真实 versionID）
+			threshold := h.Config.Compact.DeltaCompressThreshold
+			offset, _, err := h.DeltaStore.Append(
+				fileID,
+				versionID,
+				diffs,
+				meta,
+				threshold,
+			)
+			if err != nil {
+				results[i] = SnapshotResult{Path: sf.Path, Status: "error", Reason: fmt.Sprintf("写入 delta 失败: %v", err)}
+				summary.Errors++
+				return
+			}
+
+			// 更新版本记录的 delta_offset
+			if err := h.DB.UpdateVersionStorage(versionID, "delta", nil, &offset); err != nil {
+				results[i] = SnapshotResult{Path: sf.Path, Status: "error", Reason: fmt.Sprintf("更新 delta_offset 失败: %v", err)}
+				summary.Errors++
+				return
+			}
+
+			// 更新 latest_version_id
+			if err := h.DB.UpdateLatestVersion(fileID, versionID); err != nil {
+				results[i] = SnapshotResult{Path: sf.Path, Status: "error", Reason: fmt.Sprintf("更新 latest_version 失败: %v", err)}
+				summary.Errors++
+				return
+			}
+
+		results[i] = SnapshotResult{Path: sf.Path, Status: "captured", VersionID: &versionID}
+		summary.Captured++
+
+			// compact 检查
+			h.tryCompact(fileID)
+		}()
+	}
+
+	resp := SnapshotResponse{
+		Results: results,
+		Summary: summary,
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// rebuildContent 根据版本记录重建完整文件内容。
+func (h *Handler) rebuildContent(ver map[string]any) ([]byte, error) {
+	storageMode := ver["storageMode"].(string)
+
+	switch storageMode {
+	case "blob":
+		hash := ver["blobHash"].(*string)
+		if hash == nil {
+			return nil, fmt.Errorf("blob 模式但 hash 为空")
+		}
+		return h.BlobStore.Read(*hash)
+
+	case "delta":
+		// 回溯到前一个 blob checkpoint，逐个 apply delta
+		return h.rebuildFromDeltaChain(ver)
+
+	case "delete":
+		return nil, fmt.Errorf("delete 版本无内容可恢复")
+
+	default:
+		return nil, fmt.Errorf("不支持的存储模式: %s", storageMode)
+	}
+}
+
+// rebuildFromDeltaChain 从指定版本回溯到最近的 blob checkpoint，重建完整内容。
+func (h *Handler) rebuildFromDeltaChain(ver map[string]any) ([]byte, error) {
+	dmp := diffmatchpatch.New()
+
+	// 收集 delta 链（从当前版本回溯到最近的 blob checkpoint）
+	type deltaStep struct {
+		diffs []diffmatchpatch.Diff
+	}
+
+	var steps []deltaStep
+	currentVer := ver
+
+	for {
+		switch currentVer["storageMode"].(string) {
+		case "blob":
+			// 找到 blob checkpoint，读取完整内容
+			hash := currentVer["blobHash"].(*string)
+			if hash == nil {
+				return nil, fmt.Errorf("blob checkpoint 但 hash 为空")
+			}
+			content, err := h.BlobStore.Read(*hash)
+			if err != nil {
+				return nil, fmt.Errorf("读取 blob checkpoint 失败: %w", err)
+			}
+
+			// 反向 apply delta chain
+			for i := len(steps) - 1; i >= 0; i-- {
+				content = applyPatch(dmp, content, steps[i].diffs)
+			}
+			return content, nil
+
+		case "delta":
+			offset := currentVer["deltaOffset"].(*int64)
+			if offset == nil {
+				return nil, fmt.Errorf("delta 模式但 offset 为空")
+			}
+			fileID := currentVer["fileID"].(int64)
+
+			_, diffs, _, err := h.DeltaStore.ReadEntry(fileID, *offset)
+			if err != nil {
+				return nil, fmt.Errorf("读取 delta entry 失败: %w", err)
+			}
+			steps = append(steps, deltaStep{diffs: diffs})
+
+			// 回溯到 base
+			baseID := currentVer["baseID"]
+			if baseID == nil {
+				return nil, fmt.Errorf("delta 模式但 base_id 为空")
+			}
+			bid := *baseID.(*int64)
+			baseVer, err := h.DB.GetVersion(bid)
+			if err != nil {
+				return nil, fmt.Errorf("查询 base version %d 失败: %w", bid, err)
+			}
+			currentVer = baseVer
+
+		default:
+			return nil, fmt.Errorf("不支持的存储模式: %s", currentVer["storageMode"].(string))
+		}
+	}
+}
+
+// applyPatch 对内容应用 go-diff 的 []Diff（PatchApply）。
+// go-diff 的 PatchApply 会尝试将 patch 应用到文本上。
+func applyPatch(dmp *diffmatchpatch.DiffMatchPatch, text []byte, diffs []diffmatchpatch.Diff) []byte {
+	// 使用 go-diff 的 PatchMake + PatchApply 流程
+	// 先将 []Diff 转换为 patch 列表
+	patches := dmp.PatchMake(string(text), diffs)
+	result, _ := dmp.PatchApply(patches, string(text))
+	return []byte(result)
+}
+
+// HandleListFiles 处理 GET /api/files，列出所有追踪的文件。
+func (h *Handler) HandleListFiles(w http.ResponseWriter, r *http.Request) {
+	// 查询所有非删除项目的文件
+	rows, err := h.DB.Query(`
+		SELECT p.name as project_name, f.path, f.latest_version_id, f.created_at
+		FROM files f
+		JOIN projects p ON f.project_id = p.id
+		WHERE p.is_deleted = 0
+		ORDER BY p.name, f.path
+	`)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", fmt.Sprintf("查询文件列表失败: %v", err))
+		return
+	}
+	defer rows.Close()
+
+	type fileEntry struct {
+		Project         string `json:"project"`
+		Path            string `json:"path"`
+		LatestVersionID *int64 `json:"latestVersionId"`
+		CreatedAt       string `json:"createdAt"`
+	}
+
+	var files []fileEntry
+	for rows.Next() {
+		var projectName, filePath, createdAt string
+		var latestVersionID *int64
+		if err := rows.Scan(&projectName, &filePath, &latestVersionID, &createdAt); err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", fmt.Sprintf("扫描文件行失败: %v", err))
+			return
+		}
+		files = append(files, fileEntry{
+			Project:         projectName,
+			Path:            filePath,
+			LatestVersionID: latestVersionID,
+			CreatedAt:       createdAt,
+		})
+	}
+
+	if files == nil {
+		files = []fileEntry{}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"files": files})
+}
+
+// HandleStats 处理 GET /api/stats。
+func (h *Handler) HandleStats(w http.ResponseWriter, r *http.Request) {
+	stats, err := h.DB.GetStats()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", fmt.Sprintf("查询统计失败: %v", err))
+		return
+	}
+	writeJSON(w, http.StatusOK, stats)
+}

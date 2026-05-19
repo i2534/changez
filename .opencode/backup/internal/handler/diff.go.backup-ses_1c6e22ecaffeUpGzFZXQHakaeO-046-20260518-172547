@@ -1,0 +1,229 @@
+package handler
+
+import (
+	"fmt"
+	"net/http"
+	"strconv"
+	"strings"
+
+	"github.com/sergi/go-diff/diffmatchpatch"
+)
+
+func (h *Handler) HandleDiff(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "仅支持 GET")
+		return
+	}
+
+	// 从 URL 提取文件路径
+	path := extractPathFromURL(r.URL.Path, "/api/files/", "/diff")
+	if path == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "path 参数缺失")
+		return
+	}
+
+	// 解析 query 参数
+	q := r.URL.Query()
+	fromStr := q.Get("from")
+	toStr := q.Get("to")
+
+	if fromStr == "" || toStr == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "需要 from 和 to 参数")
+		return
+	}
+
+	from, err := strconv.ParseInt(fromStr, 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", fmt.Sprintf("无效的 from 版本号: %s", fromStr))
+		return
+	}
+
+	to, err := strconv.ParseInt(toStr, 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", fmt.Sprintf("无效的 to 版本号: %s", toStr))
+		return
+	}
+
+	h.Logger.Debug("diff request", "path", path, "from", from, "to", to)
+	project, err := h.DB.FindProjectByPath(path)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "PROJECT_NOT_FOUND", err.Error())
+		return
+	}
+
+	// 计算相对路径
+	relPath := path
+	rootPath := project["rootPath"].(string)
+	if len(path) > len(rootPath) && path[:len(rootPath)] == rootPath {
+		relPath = strings.TrimPrefix(path[len(rootPath):], "/")
+	}
+
+	// 查文件
+	file, err := h.DB.GetFileByPath(project["id"].(int64), relPath)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "FILE_NOT_FOUND", err.Error())
+		return
+	}
+
+	fileID := file["id"].(int64)
+
+	// 加 per-file 共享锁（读操作）
+	fileMu := h.getFileLock(fileID)
+	fileMu.RLock()
+	defer fileMu.RUnlock()
+
+	// 查两个版本
+	verA, err := h.DB.GetVersion(from)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "VERSION_NOT_FOUND", fmt.Sprintf("版本 %d 不存在: %v", from, err))
+		return
+	}
+	verB, err := h.DB.GetVersion(to)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "VERSION_NOT_FOUND", fmt.Sprintf("版本 %d 不存在: %v", to, err))
+		return
+	}
+
+	// 验证版本属于该文件
+	if verA["fileID"].(int64) != fileID {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", fmt.Sprintf("版本 %d 不属于该文件", from))
+		return
+	}
+	if verB["fileID"].(int64) != fileID {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", fmt.Sprintf("版本 %d 不属于该文件", to))
+		return
+	}
+
+	// 检查 delete 版本
+	if verA["action"].(string) == "delete" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", fmt.Sprintf("版本 %d 为 delete 状态，无法参与 diff", from))
+		return
+	}
+	if verB["action"].(string) == "delete" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", fmt.Sprintf("版本 %d 为 delete 状态，无法参与 diff", to))
+		return
+	}
+
+	// 优化：如果两版本相邻且 versionB 为 delta 模式，直接从 delta entry 读取 []Diff
+	var diffs []diffmatchpatch.Diff
+	isAdjacentDelta := false
+
+	// 检查是否为相邻版本：verB.baseID == verA.id
+	if verB["storageMode"].(string) == "delta" && verB["baseID"] != nil && *verB["baseID"].(*int64) == verA["id"].(int64) {
+		// 从 delta entry 直接读取
+		offset := verB["deltaOffset"].(*int64)
+		if offset != nil {
+			_, readDiffs, _, err := h.DeltaStore.ReadEntry(fileID, *offset)
+			if err == nil {
+				diffs = readDiffs
+				isAdjacentDelta = true
+			}
+		}
+	}
+
+	if !isAdjacentDelta {
+		// 分别重建两个版本的完整内容，然后 DiffMain
+		contentA, err := h.rebuildContent(verA)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "CORRUPTED_DATA", fmt.Sprintf("重建版本 %d 内容失败: %v", from, err))
+			return
+		}
+		contentB, err := h.rebuildContent(verB)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "CORRUPTED_DATA", fmt.Sprintf("重建版本 %d 内容失败: %v", to, err))
+			return
+		}
+
+		dmp := diffmatchpatch.New()
+		diffs = dmp.DiffMain(string(contentA), string(contentB), true)
+		diffs = dmp.DiffCleanupSemantic(diffs)
+	}
+
+	// 渲染 unified diff
+	unified := renderUnifiedDiff(path, verA["changedAt"].(string), verB["changedAt"].(string), diffs)
+
+	resp := map[string]any{
+		"path":    path,
+		"from":    from,
+		"to":      to,
+		"diff":    unified,
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// renderUnifiedDiff 将 []Diff 渲染为 unified diff 文本。
+// 格式类似标准 diff -u 输出。
+func renderUnifiedDiff(filePath, timeA, timeB string, diffs []diffmatchpatch.Diff) string {
+	var b strings.Builder
+
+	// --- a/path	timestamp
+	// +++ b/path	timestamp
+	b.WriteString(fmt.Sprintf("--- a/%s\t%s\n", filePath, timeA))
+	b.WriteString(fmt.Sprintf("+++ b/%s\t%s\n", filePath, timeB))
+
+	// 计算行号（简化版：只标注 @@ 区域）
+	// 遍历 diffs 计算 hunk
+	const contextLines = 3
+
+	type lineEntry struct {
+		op   rune // ' ', '+', '-'
+		text string
+	}
+
+	// 将 diffs 展开为行列表
+	var allLines []lineEntry
+	for _, d := range diffs {
+		text := d.Text
+		lines := strings.Split(text, "\n")
+		for i, line := range lines {
+			if i > 0 {
+				// 换行符分割后，空字符串代表空行
+			}
+			if d.Type == diffmatchpatch.DiffEqual {
+				allLines = append(allLines, lineEntry{' ', line})
+			} else if d.Type == diffmatchpatch.DiffInsert {
+				allLines = append(allLines, lineEntry{'+', line})
+			} else if d.Type == diffmatchpatch.DiffDelete {
+				allLines = append(allLines, lineEntry{'-', line})
+			}
+		}
+	}
+	// 去掉最后一个多余的换行拆分
+	if len(allLines) > 0 && allLines[len(allLines)-1].text == "" {
+		allLines = allLines[:len(allLines)-1]
+	}
+
+	// 分 hunk（简化：所有内容作为一个 hunk）
+	// 计算起始行号和行数
+	startA, startB := 1, 1
+	countA, countB := 0, 0
+	for _, l := range allLines {
+		switch l.op {
+		case ' ':
+			countA++
+			countB++
+		case '-':
+			countA++
+		case '+':
+			countB++
+		}
+	}
+
+	if countA == 0 && countB == 0 {
+		return b.String()
+	}
+
+	b.WriteString(fmt.Sprintf("@@ -%d,%d +%d,%d @@\n", startA, countA, startB, countB))
+
+	for _, l := range allLines {
+		if l.op == ' ' {
+			b.WriteString(" " + l.text + "\n")
+		} else if l.op == '-' {
+			b.WriteString("-" + l.text + "\n")
+		} else if l.op == '+' {
+			b.WriteString("+" + l.text + "\n")
+		}
+	}
+
+	return b.String()
+}

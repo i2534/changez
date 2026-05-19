@@ -1,0 +1,359 @@
+package mcp
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+
+	mcp "github.com/mark3labs/mcp-go/mcp"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/changez/changez/internal/config"
+	"github.com/changez/changez/internal/db"
+	"github.com/changez/changez/internal/handler"
+	"github.com/changez/changez/internal/storage"
+)
+
+func setupMCPHandler(t *testing.T) *handler.Handler {
+	t.Helper()
+	dir := t.TempDir()
+	database, err := db.Open(dir)
+	require.NoError(t, err)
+
+	bs := storage.NewBlobStore(dir)
+	require.NoError(t, bs.EnsureDir())
+
+	ds := storage.NewDeltaStore(dir)
+	require.NoError(t, ds.EnsureDir())
+
+	cfg := config.Defaults()
+	sourceIDs, err := database.LoadSourceNameToID()
+	require.NoError(t, err)
+
+	fileMuMap := &sync.Map{}
+	h := handler.NewHandler(database, bs, ds, &cfg, sourceIDs, fileMuMap)
+	return h
+}
+
+// ========== parseFilesJSON Tests ==========
+
+func TestParseFilesJSON_Valid(t *testing.T) {
+	req := &handler.SnapshotRequest{}
+	input := `[{"path":"/a.go","content":"pkg a","action":"create","message":"init"}]`
+	err := parseFilesJSON(input, req)
+	require.NoError(t, err)
+	require.Len(t, req.Files, 1)
+	assert.Equal(t, "/a.go", req.Files[0].Path)
+	assert.Equal(t, "pkg a", req.Files[0].Content)
+	assert.Equal(t, "create", req.Files[0].Action)
+	assert.Equal(t, "init", req.Files[0].Message)
+}
+
+func TestParseFilesJSON_Multiple(t *testing.T) {
+	req := &handler.SnapshotRequest{}
+	input := `[
+		{"path":"/a.go","content":"pkg a"},
+		{"path":"/b.go","content":"pkg b"}
+	]`
+	err := parseFilesJSON(input, req)
+	require.NoError(t, err)
+	require.Len(t, req.Files, 2)
+}
+
+func TestParseFilesJSON_Invalid(t *testing.T) {
+	req := &handler.SnapshotRequest{}
+	err := parseFilesJSON("not json", req)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "parse files JSON")
+}
+
+// ========== toolError Tests ==========
+
+func TestToolError(t *testing.T) {
+	result, err := toolError("something went wrong")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.IsError)
+	require.Len(t, result.Content, 1)
+	text, ok := result.Content[0].(mcp.TextContent)
+	require.True(t, ok)
+	assert.Contains(t, text.Text, "something went wrong")
+}
+
+// ========== NewMCPHandler Tests ==========
+
+func TestNewMCPHandler_ReturnsNonNil(t *testing.T) {
+	h := setupMCPHandler(t)
+	httpHandler := NewMCPHandler(h)
+	require.NotNil(t, httpHandler)
+}
+
+func TestNewMCPHandler_AcceptsRequest(t *testing.T) {
+	h := setupMCPHandler(t)
+	httpHandler := NewMCPHandler(h)
+	require.NotNil(t, httpHandler)
+
+	// The MCP SSE handler should accept POST with JSON-RPC body
+	// An empty/nonsense body should not panic, should return some response
+	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	httpHandler.ServeHTTP(w, req)
+	// MCP SSE streaming handler returns 200 with content-type text/event-stream
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+// ========== NewSnapshotTool Handler Tests ==========
+
+func TestNewSnapshotTool_Handler_Create(t *testing.T) {
+	h := setupMCPHandler(t)
+	// Create a project first via handler
+	createProjectViaHandler(t, h)
+
+	tool, handlerFunc := NewSnapshotTool(h)
+	require.NotNil(t, tool)
+	require.NotNil(t, handlerFunc)
+
+	filesJSON, _ := json.Marshal([]map[string]string{
+		{"path": "/home/user/proj/main.go", "content": "package main\nfunc main() {}"},
+	})
+	req := mcp.CallToolRequest{}
+	req.Params.Name = "changez_snapshot"
+	req.Params.Arguments = map[string]interface{}{
+		"source": "human",
+		"files":  string(filesJSON),
+	}
+
+	result, err := handlerFunc(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Len(t, result.Content, 1)
+	text, ok := result.Content[0].(mcp.TextContent)
+	require.True(t, ok)
+
+	var results []handler.SnapshotResult
+	err = json.Unmarshal([]byte(text.Text), &results)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, "captured", results[0].Status)
+}
+
+func TestNewSnapshotTool_Handler_MissingSource(t *testing.T) {
+	h := setupMCPHandler(t)
+	_, handlerFunc := NewSnapshotTool(h)
+	require.NotNil(t, handlerFunc)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Name = "changez_snapshot"
+	req.Params.Arguments = map[string]interface{}{
+		"files": "[]",
+	}
+
+	result, err := handlerFunc(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.IsError)
+}
+
+func TestNewSnapshotTool_Handler_InvalidFiles(t *testing.T) {
+	h := setupMCPHandler(t)
+	_, handlerFunc := NewSnapshotTool(h)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Name = "changez_snapshot"
+	req.Params.Arguments = map[string]interface{}{
+		"source": "human",
+		"files":  "not json",
+	}
+
+	result, err := handlerFunc(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.IsError)
+}
+
+// ========== NewLogTool Handler Tests ==========
+
+func TestNewLogTool_Handler_MissingPath(t *testing.T) {
+	h := setupMCPHandler(t)
+	_, handlerFunc := NewLogTool(h)
+	require.NotNil(t, handlerFunc)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Name = "changez_log"
+	req.Params.Arguments = map[string]interface{}{}
+
+	result, err := handlerFunc(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.IsError)
+}
+
+func TestNewLogTool_Handler_NotFoundPath(t *testing.T) {
+	h := setupMCPHandler(t)
+	_, handlerFunc := NewLogTool(h)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Name = "changez_log"
+	req.Params.Arguments = map[string]interface{}{
+		"path": "/nonexistent/file.go",
+	}
+
+	result, err := handlerFunc(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.IsError)
+}
+
+// ========== NewRestoreTool Handler Tests ==========
+
+func TestNewRestoreTool_Handler_ZeroVersion(t *testing.T) {
+	h := setupMCPHandler(t)
+	_, handlerFunc := NewRestoreTool(h)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Name = "changez_restore"
+	req.Params.Arguments = map[string]interface{}{
+		"path":    "/test.go",
+		"version": float64(0),
+	}
+
+	result, err := handlerFunc(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.IsError)
+	text, ok := result.Content[0].(mcp.TextContent)
+	require.True(t, ok)
+	assert.Contains(t, text.Text, "must be a positive integer")
+}
+
+func TestNewRestoreTool_Handler_NonExistentPath(t *testing.T) {
+	h := setupMCPHandler(t)
+	_, handlerFunc := NewRestoreTool(h)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Name = "changez_restore"
+	req.Params.Arguments = map[string]interface{}{
+		"path":    "/nonexistent.go",
+		"version": float64(1),
+	}
+
+	result, err := handlerFunc(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.IsError)
+}
+
+// ========== NewDiffTool Handler Tests ==========
+
+func TestNewDiffTool_Handler_ZeroVersion(t *testing.T) {
+	h := setupMCPHandler(t)
+	_, handlerFunc := NewDiffTool(h)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Name = "changez_diff"
+	req.Params.Arguments = map[string]interface{}{
+		"path":     "/test.go",
+		"versionA": float64(0),
+		"versionB": float64(1),
+	}
+
+	result, err := handlerFunc(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.IsError)
+	text, ok := result.Content[0].(mcp.TextContent)
+	require.True(t, ok)
+	assert.Contains(t, text.Text, "must be positive integers")
+}
+
+func TestNewDiffTool_Handler_NonExistentPath(t *testing.T) {
+	h := setupMCPHandler(t)
+	_, handlerFunc := NewDiffTool(h)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Name = "changez_diff"
+	req.Params.Arguments = map[string]interface{}{
+		"path":     "/nonexistent.go",
+		"versionA": float64(1),
+		"versionB": float64(2),
+	}
+
+	result, err := handlerFunc(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.IsError)
+}
+
+// ========== Tool Definition Tests ==========
+
+func TestSnapshotTool_Definition(t *testing.T) {
+	h := setupMCPHandler(t)
+	tool, _ := NewSnapshotTool(h)
+	require.NotNil(t, tool)
+	assert.Equal(t, "changez_snapshot", tool.Name)
+	assert.NotEmpty(t, tool.Description)
+	assert.NotNil(t, tool.InputSchema)
+	props := tool.InputSchema.Properties
+	require.NotNil(t, props)
+	assert.Contains(t, props, "source")
+	assert.Contains(t, props, "files")
+	assert.Contains(t, props, "sessionId")
+	assert.Contains(t, props, "model")
+}
+
+func TestLogTool_Definition(t *testing.T) {
+	h := setupMCPHandler(t)
+	tool, _ := NewLogTool(h)
+	require.NotNil(t, tool)
+	assert.Equal(t, "changez_log", tool.Name)
+	props := tool.InputSchema.Properties
+	require.NotNil(t, props)
+	assert.Contains(t, props, "path")
+	assert.Contains(t, props, "since")
+	assert.Contains(t, props, "until")
+	assert.Contains(t, props, "source")
+	assert.Contains(t, props, "action")
+}
+
+func TestRestoreTool_Definition(t *testing.T) {
+	h := setupMCPHandler(t)
+	tool, _ := NewRestoreTool(h)
+	require.NotNil(t, tool)
+	assert.Equal(t, "changez_restore", tool.Name)
+	props := tool.InputSchema.Properties
+	require.NotNil(t, props)
+	assert.Contains(t, props, "path")
+	assert.Contains(t, props, "version")
+}
+
+func TestDiffTool_Definition(t *testing.T) {
+	h := setupMCPHandler(t)
+	tool, _ := NewDiffTool(h)
+	require.NotNil(t, tool)
+	assert.Equal(t, "changez_diff", tool.Name)
+	props := tool.InputSchema.Properties
+	require.NotNil(t, props)
+	assert.Contains(t, props, "path")
+	assert.Contains(t, props, "versionA")
+	assert.Contains(t, props, "versionB")
+}
+
+// ========== Helpers ==========
+
+func createProjectViaHandler(t *testing.T, h *handler.Handler) {
+	t.Helper()
+	body := `{"rootPath":"/home/user/proj","name":"test"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/projects", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.HandleCreateProject(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create project failed: %d %s", w.Code, w.Body.String())
+	}
+}

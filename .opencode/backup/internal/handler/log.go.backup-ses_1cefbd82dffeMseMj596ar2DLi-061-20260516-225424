@@ -1,0 +1,188 @@
+package handler
+
+import (
+	"fmt"
+	"net/http"
+	"strconv"
+	"strings"
+
+	"github.com/changez/changez/internal/storage"
+)
+
+// HandleLog 处理 GET /api/files/:path/versions。
+// 返回文件的版本历史，支持时间和来源过滤。
+func (h *Handler) HandleLog(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "仅支持 GET")
+		return
+	}
+
+	// 从 URL 路径中提取文件路径
+	// URL 形如：/api/files/home/user/project/main.go/versions
+	// 需要去除 /api/files/ 前缀和 /versions 后缀
+	path := extractPathFromURL(r.URL.Path, "/api/files/", "/versions")
+	if path == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "path 参数缺失")
+		return
+	}
+
+	// 根据 path 匹配 project
+	project, err := h.DB.FindProjectByPath(path)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "PROJECT_NOT_FOUND", err.Error())
+		return
+	}
+
+	// 计算相对路径
+	relPath := path
+	rootPath := project["rootPath"].(string)
+	if len(path) > len(rootPath) && path[:len(rootPath)] == rootPath {
+		relPath = strings.TrimPrefix(path[len(rootPath):], "/")
+	}
+
+	// 查文件
+	file, err := h.DB.GetFileByPath(project["id"].(int64), relPath)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "FILE_NOT_FOUND", err.Error())
+		return
+	}
+
+	fileID := file["id"].(int64)
+
+	// 解析查询参数
+	q := r.URL.Query()
+
+	// source 过滤
+	var sourceID *int64
+	if src := q.Get("source"); src != "" {
+		sid, err := h.DB.GetSourceIDByName(src)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", fmt.Sprintf("不支持的 source: %s", src))
+			return
+		}
+		sourceID = &sid
+	}
+
+	// action 过滤
+	var action *string
+	if a := q.Get("action"); a != "" {
+		action = &a
+	}
+
+	// 时间过滤
+	var since, until *string
+	if s := q.Get("since"); s != "" {
+		since = &s
+	}
+	if u := q.Get("until"); u != "" {
+		until = &u
+	}
+
+	// 分页
+	limit := 20
+	offset := 0
+	if l := q.Get("limit"); l != "" {
+		if n, err := strconv.Atoi(l); err == nil && n > 0 && n <= 100 {
+			limit = n
+		}
+	}
+	if o := q.Get("offset"); o != "" {
+		if n, err := strconv.Atoi(o); err == nil && n >= 0 {
+			offset = n
+		}
+	}
+
+	// 查询版本列表
+	versions, err := h.DB.ListVersions(fileID, sourceID, action, since, until, limit, offset)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", fmt.Sprintf("查询版本列表失败: %v", err))
+		return
+	}
+
+	// 统计总数
+	total, err := h.DB.CountVersions(fileID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", fmt.Sprintf("统计版本数失败: %v", err))
+		return
+	}
+
+	// 构建返回结果，补充 metadata 信息
+	type versionEntry struct {
+		VersionID int64  `json:"versionId"`
+		Timestamp string `json:"timestamp"`
+		Source    string `json:"source"`
+		Action    string `json:"action"`
+		SessionID string `json:"sessionId,omitempty"`
+		Model     string `json:"model,omitempty"`
+		Message   string `json:"message,omitempty"`
+	}
+
+	resultVersions := make([]versionEntry, 0, len(versions))
+	for _, v := range versions {
+		entry := versionEntry{
+			VersionID: v["versionId"].(int64),
+			Timestamp: v["timestamp"].(string),
+			Source:    v["source"].(string),
+			Action:    v["action"].(string),
+		}
+
+		// 如果是 delta 模式，读取 metadata
+		if v["storageMode"].(string) == "delta" {
+			meta, err := h.readDeltaMeta(fileID, v["versionId"].(int64))
+			if err == nil && meta != nil {
+				entry.SessionID = meta.SessionID
+				entry.Model = meta.Model
+				entry.Message = meta.Message
+			}
+		}
+
+		resultVersions = append(resultVersions, entry)
+	}
+
+	resp := map[string]any{
+		"file":          path,
+		"project":       project["name"].(string),
+		"totalVersions": total,
+		"versions":      resultVersions,
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// readDeltaMeta 从 delta entry 中读取 metadata。
+// 通过 version 表中的 delta_offset 找到对应的 delta entry。
+func (h *Handler) readDeltaMeta(fileID, versionID int64) (*storage.DeltaMeta, error) {
+	ver, err := h.DB.GetVersion(versionID)
+	if err != nil {
+		return nil, err
+	}
+
+	if ver["storageMode"].(string) != "delta" {
+		return nil, nil
+	}
+
+	offset := ver["deltaOffset"]
+	if offset == nil {
+		return nil, nil
+	}
+
+	_, _, meta, err := h.DeltaStore.ReadEntry(fileID, offset.(int64))
+	if err != nil {
+		return nil, err
+	}
+
+	return meta, nil
+}
+
+// extractPathFromURL 从 URL 路径中提取文件路径。
+// 去除 prefix 前缀和 suffix 后缀。
+func extractPathFromURL(urlPath, prefix, suffix string) string {
+	if !strings.HasPrefix(urlPath, prefix) {
+		return ""
+	}
+	path := strings.TrimPrefix(urlPath, prefix)
+	if suffix != "" && strings.HasSuffix(path, suffix) {
+		path = strings.TrimSuffix(path, suffix)
+	}
+	return path
+}

@@ -1,0 +1,17 @@
+# Binaries
+changez
+*.test
+
+# Runtime
+.changez.pid
+changez.log
+config.yaml
+data/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

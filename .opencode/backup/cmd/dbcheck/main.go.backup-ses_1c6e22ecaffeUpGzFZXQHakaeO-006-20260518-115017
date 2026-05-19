@@ -1,0 +1,28 @@
+package main
+
+import (
+	"fmt"
+	"log"
+
+	"github.com/changez/changez/internal/db"
+)
+
+func main() {
+	d, err := db.Open("/home/lan/workspace/go/changez/data/changez.db")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer d.Close()
+
+	projects, err := d.GetAllProjects()
+	fmt.Printf("Projects: %d\n", len(projects))
+	for _, p := range projects {
+		fmt.Printf("  [%d] %s | root=%s\n", p.ID, p.Name, p.RootPath)
+	}
+
+	files, err := d.GetAllFiles()
+	fmt.Printf("\nFiles: %d\n", len(files))
+	for _, f := range files {
+		fmt.Printf("  [%d] %s | project=%d | source=%d\n", f.ID, f.Path, f.ProjectID, f.SourceID)
+	}
+}

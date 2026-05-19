@@ -1,0 +1,192 @@
+package handler
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"strconv"
+	"strings"
+
+	"github.com/changez/changez/internal/storage"
+)
+
+func (h *Handler) HandleLog(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "仅支持 GET")
+		return
+	}
+
+	path := extractPathFromURL(r.URL.Path, "/api/files/", "/versions")
+	if path == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "path 参数缺失")
+		return
+	}
+
+	q := r.URL.Query()
+
+	var sourceID *int64
+	if src := q.Get("source"); src != "" {
+		sid, err := h.DB.GetSourceIDByName(r.Context(), src)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", fmt.Sprintf("不支持的 source: %s", src))
+			return
+		}
+		sourceID = &sid
+	}
+
+	var action *string
+	if a := q.Get("action"); a != "" {
+		action = &a
+	}
+
+	var since, until *string
+	if s := q.Get("since"); s != "" {
+		since = &s
+	}
+	if u := q.Get("until"); u != "" {
+		until = &u
+	}
+
+	limit := 20
+	offset := 0
+	if l := q.Get("limit"); l != "" {
+		if n, err := strconv.Atoi(l); err == nil && n > 0 && n <= 100 {
+			limit = n
+		}
+	}
+	if o := q.Get("offset"); o != "" {
+		if n, err := strconv.Atoi(o); err == nil && n >= 0 {
+			offset = n
+		}
+	}
+
+	h.Logger.Debug("versions request", "path", path, "limit", limit, "offset", offset)
+
+	result, total, err := h.doLog(r.Context(), path, sourceID, action, since, until, limit, offset)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
+		} else {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		}
+		return
+	}
+
+	resp := map[string]any{
+		"file":          path,
+		"project":       result.Project,
+		"totalVersions": total,
+		"versions":      result.Entries,
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// logResult is returned by doLog (shared by HandleLog and ProcessLog).
+type logResult struct {
+	Project string
+	Entries []versionEntry
+}
+
+type versionEntry struct {
+	VersionID int64  `json:"versionId"`
+	Timestamp string `json:"timestamp"`
+	Source    string `json:"source"`
+	Action    string `json:"action"`
+	SessionID string `json:"sessionId,omitempty"`
+	Model     string `json:"model,omitempty"`
+	Message   string `json:"message,omitempty"`
+}
+
+// doLog resolves project/file and queries versions (shared by HandleLog and ProcessLog).
+func (h *Handler) doLog(ctx context.Context, path string, sourceID *int64, action, since, until *string, limit, offset int) (*logResult, int, error) {
+	project, err := h.DB.FindProjectByPath(ctx, path)
+	if err != nil {
+		return nil, 0, fmt.Errorf("project not found: %w", err)
+	}
+
+	relPath := path
+	rootPath := project["rootPath"].(string)
+	if len(path) > len(rootPath) && path[:len(rootPath)] == rootPath {
+		relPath = strings.TrimPrefix(path[len(rootPath):], "/")
+	}
+
+	file, err := h.DB.GetFileByPath(ctx, project["id"].(int64), relPath)
+	if err != nil {
+		return nil, 0, fmt.Errorf("file not found: %w", err)
+	}
+	fileID := file["id"].(int64)
+
+	versions, err := h.DB.ListVersions(ctx, fileID, sourceID, action, since, until, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("查询版本列表失败: %w", err)
+	}
+
+	total, err := h.DB.CountVersions(ctx, fileID)
+	if err != nil {
+		return nil, 0, fmt.Errorf("统计版本数失败: %w", err)
+	}
+
+	resultVersions := make([]versionEntry, 0, len(versions))
+	for _, v := range versions {
+		entry := versionEntry{
+			VersionID: v["versionId"].(int64),
+			Timestamp: v["timestamp"].(string),
+			Source:    v["source"].(string),
+			Action:    v["action"].(string),
+		}
+
+		if v["storageMode"].(string) == "delta" {
+			meta, err := h.readDeltaMeta(ctx, fileID, v["versionId"].(int64))
+			if err == nil && meta != nil {
+				entry.SessionID = meta.SessionID
+				entry.Model = meta.Model
+				entry.Message = meta.Message
+			}
+		}
+
+		resultVersions = append(resultVersions, entry)
+	}
+
+	return &logResult{
+		Project: project["name"].(string),
+		Entries: resultVersions,
+	}, total, nil
+}
+
+func (h *Handler) readDeltaMeta(ctx context.Context, fileID, versionID int64) (*storage.DeltaMeta, error) {
+	ver, err := h.DB.GetVersion(ctx, versionID)
+	if err != nil {
+		return nil, err
+	}
+
+	if ver["storageMode"].(string) != "delta" {
+		return nil, nil
+	}
+
+	offset := ver["deltaOffset"]
+	if offset == nil {
+		return nil, nil
+	}
+
+	_, _, meta, err := h.DeltaStore.ReadEntry(fileID, *offset.(*int64))
+	if err != nil {
+		return nil, err
+	}
+
+	return meta, nil
+}
+
+func extractPathFromURL(urlPath, prefix, suffix string) string {
+	if !strings.HasPrefix(urlPath, prefix) {
+		return ""
+	}
+	path := strings.TrimPrefix(urlPath, prefix)
+	if suffix != "" && strings.HasSuffix(path, suffix) {
+		path = strings.TrimSuffix(path, suffix)
+	}
+	if len(path) > 0 && path[0] != '/' {
+		path = "/" + path
+	}
+	return path
+}

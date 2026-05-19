@@ -1,0 +1,240 @@
+package storage
+
+import (
+	"bytes"
+	"encoding/binary"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sync"
+
+	"github.com/klauspost/compress/zstd"
+	"github.com/sergi/go-diff/diffmatchpatch"
+)
+
+const (
+	DeltaMetaFlagMask = byte(0x80)
+)
+
+// ComputeDiffs computes cleaned semantic diffs between oldText and newText.
+func ComputeDiffs(oldText, newText string) []diffmatchpatch.Diff {
+	dmp := diffmatchpatch.New()
+	diffs := dmp.DiffMain(oldText, newText, true)
+	return dmp.DiffCleanupSemantic(diffs)
+}
+
+type DeltaMeta struct {
+	SessionID string `json:"sessionId,omitempty"`
+	Model     string `json:"model,omitempty"`
+	Message   string `json:"message,omitempty"`
+}
+
+type DeltaStore struct {
+	mu  sync.Mutex
+	dir string
+}
+
+func NewDeltaStore(dataDir string) *DeltaStore {
+	return &DeltaStore{
+		dir: filepath.Join(dataDir, "deltas"),
+	}
+}
+
+func (s *DeltaStore) deltaFilePath(fileID int64) string {
+	return filepath.Join(s.dir, fmt.Sprintf("%d.delta", fileID))
+}
+
+func (s *DeltaStore) EnsureDir() error {
+	return os.MkdirAll(s.dir, 0o755)
+}
+
+func compressZstd(data []byte) ([]byte, error) {
+	var buf bytes.Buffer
+	w, err := zstd.NewWriter(&buf)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := w.Write(data); err != nil {
+		w.Close()
+		return nil, err
+	}
+	if err := w.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func decompressZstd(data []byte) ([]byte, error) {
+	r, err := zstd.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	var buf bytes.Buffer
+	if _, err := buf.ReadFrom(r); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func (s *DeltaStore) Append(fileID, versionID int64, diffs []diffmatchpatch.Diff, meta *DeltaMeta, threshold int) (int64, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	rawDiff, err := json.Marshal(diffs)
+	if err != nil {
+		return 0, false, fmt.Errorf("serialize diffs: %w", err)
+	}
+
+	compressMethod := uint16(CompressNone)
+	diffData := rawDiff
+	compressed := false
+
+	if len(rawDiff) > threshold {
+		c, err := compressZstd(rawDiff)
+		if err == nil && len(c) < len(rawDiff) {
+			compressMethod = CompressZstd
+			diffData = c
+			compressed = true
+		}
+	}
+
+	var metaBytes []byte
+	if meta != nil {
+		mb, err := json.Marshal(meta)
+		if err != nil {
+			return 0, false, fmt.Errorf("serialize delta meta: %w", err)
+		}
+		metaBytes = mb
+	}
+
+	header := make([]byte, DeltaHeaderSize)
+	binary.BigEndian.PutUint32(header[0:4], DeltaMagic)
+	binary.BigEndian.PutUint32(header[4:8], uint32(versionID))
+	binary.BigEndian.PutUint16(header[8:10], compressMethod)
+	binary.BigEndian.PutUint32(header[10:14], uint32(len(diffData)))
+
+	path := s.deltaFilePath(fileID)
+
+	info, err := os.Stat(path)
+	var entryOffset int64
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return 0, false, fmt.Errorf("stat delta file: %w", err)
+		}
+		entryOffset = 0
+	} else {
+		entryOffset = info.Size()
+	}
+
+	var buf bytes.Buffer
+	buf.Write(header)
+	buf.Write(diffData)
+
+	if len(metaBytes) > 0 {
+		metaHeader := make([]byte, 4)
+		metaHeader[0] = DeltaMetaFlagMask
+		binary.BigEndian.PutUint32(metaHeader[0:4], uint32(len(metaBytes)))
+		metaHeader[0] |= DeltaMetaFlagMask
+		buf.Write(metaHeader)
+		buf.Write(metaBytes)
+	} else {
+		metaHeader := make([]byte, 4)
+		binary.BigEndian.PutUint32(metaHeader[0:4], 0)
+		buf.Write(metaHeader)
+	}
+
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return 0, false, fmt.Errorf("open delta file: %w", err)
+	}
+	defer f.Close()
+
+	if _, err := f.Write(buf.Bytes()); err != nil {
+		return 0, false, fmt.Errorf("write delta entry: %w", err)
+	}
+
+	return entryOffset, compressed, nil
+}
+
+func (s *DeltaStore) ReadEntry(fileID int64, offset int64) (int64, []diffmatchpatch.Diff, *DeltaMeta, error) {
+	path := s.deltaFilePath(fileID)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, nil, nil, fmt.Errorf("read delta file: %w", err)
+	}
+
+	return parseDeltaEntry(data, offset)
+}
+
+func parseDeltaEntry(data []byte, offset int64) (int64, []diffmatchpatch.Diff, *DeltaMeta, error) {
+	if offset < 0 || offset >= int64(len(data)) {
+		return 0, nil, nil, fmt.Errorf("offset %d out of range", offset)
+	}
+
+	remaining := data[offset:]
+	if len(remaining) < DeltaHeaderSize {
+		return 0, nil, nil, fmt.Errorf("data too short for header at offset %d", offset)
+	}
+
+	magic := binary.BigEndian.Uint32(remaining[0:4])
+	if magic != DeltaMagic {
+		return 0, nil, nil, fmt.Errorf("invalid delta magic at offset %d", offset)
+	}
+
+	versionID := int64(binary.BigEndian.Uint32(remaining[4:8]))
+	compressMethod := binary.BigEndian.Uint16(remaining[8:10])
+	deltaLength := int(binary.BigEndian.Uint32(remaining[10:14]))
+
+	diffStart := DeltaHeaderSize
+	diffEnd := diffStart + deltaLength
+	if diffEnd > len(remaining) {
+		return 0, nil, nil, fmt.Errorf("delta data truncated at offset %d", offset)
+	}
+	diffData := remaining[diffStart:diffEnd]
+
+	var rawDiff []byte
+	switch compressMethod {
+	case CompressNone:
+		rawDiff = diffData
+	case CompressZstd:
+		decoded, err := decompressZstd(diffData)
+		if err != nil {
+			return 0, nil, nil, fmt.Errorf("decompress delta: %w", err)
+		}
+		rawDiff = decoded
+	default:
+		return 0, nil, nil, fmt.Errorf("unknown compress method %d", compressMethod)
+	}
+
+	var diffs []diffmatchpatch.Diff
+	if err := json.Unmarshal(rawDiff, &diffs); err != nil {
+		return 0, nil, nil, fmt.Errorf("deserialize diffs: %w", err)
+	}
+
+	metaStart := diffEnd
+	if metaStart+4 > len(remaining) {
+		return versionID, diffs, nil, nil
+	}
+
+	raw := binary.BigEndian.Uint32(remaining[metaStart : metaStart+4])
+	flagSet := (raw & 0x80000000) != 0
+	metaLen := int(raw & 0x7FFFFFFF)
+	if !flagSet || metaLen == 0 {
+		return versionID, diffs, nil, nil
+	}
+
+	metaDataStart := metaStart + 4
+	metaEnd := metaDataStart + metaLen
+	if metaEnd > len(remaining) {
+		return versionID, diffs, nil, nil
+	}
+
+	var meta DeltaMeta
+	if err := json.Unmarshal(remaining[metaDataStart:metaEnd], &meta); err != nil {
+		return versionID, diffs, nil, nil
+	}
+
+	return versionID, diffs, &meta, nil
+}

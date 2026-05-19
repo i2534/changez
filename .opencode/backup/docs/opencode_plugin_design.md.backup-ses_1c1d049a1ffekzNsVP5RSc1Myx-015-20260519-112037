@@ -1,0 +1,1096 @@
+# OpenCode Plugin 设计文档
+
+> 创建日期：2026-05-17
+> 状态：讨论中
+
+---
+
+## 目标
+
+在 OpenCode（AI 编码助手）中自动追踪文件变更，每次模型修改文件后自动上报 snapshot 到 changez 服务。用户零操作，完全无人参与。
+
+---
+
+## 架构总览
+
+```
+┌─────────────────────────────────────────────────────┐
+│  OpenCode (TUI / Server)                            │
+│                                                     │
+│  ┌───────────────────────────────────────────────┐  │
+│  │  changez.server.ts (Server 插件)              │  │
+│  │                                               │  │
+│  │  config: opencode.json plugin options         │  │
+│  │  init → POST /api/projects (自动注册)          │  │
+│  │  chat.message  → 记录 session 的 model 信息    │  │
+│  │  tool.execute.after → 拦截文件修改工具          │  │
+│  │                       读取修改后文件内容         │  │
+│  │                       POST → /api/snapshot     │  │
+│  └───────────────────────────────────────────────┘  │
+│                                                     │
+│  ┌───────────────────────────────────────────────┐  │
+│  │  changez.tui.ts (TUI 插件, 可选)              │  │
+│  │                                               │  │
+│  │  toast: 加载成功/失败通知                      │  │
+│  │  toast: snapshot 捕获通知 (轮询 API)           │  │
+│  │  sidebar slot: 常驻状态显示 (P1)               │  │
+│  │  GET /api/health (初始化)                      │  │
+│  │  GET /api/snapshots/latest (轮询)              │  │
+│  └───────────────────────────────────────────────┘  │
+│                                                     │
+│  Model (Qwen3.6) ──write/edit──▶ Filesystem        │
+└─────────────────────────────────────────────────────┘
+                    │ HTTP POST/GET          HTTP GET
+                    ▼                        │
+            ┌──────────────────┐             │
+            │  changez service │             │
+            │  :8760/api/      │◄────────────┘
+            │                  │
+            │  新增: GET /api/ │
+            │  snapshots/latest│
+            └──────────────────┘
+```
+
+**核心原则：** 插件与 changez 服务解耦。插件按 opencode 规范配置，仅通过 HTTP API 与服务交互。Server 和 TUI 插件完全独立，各自直连 changez 服务，不互相依赖。
+
+**服务端改动**：TUI 状态展示需要 changez 提供 `GET /api/snapshots/latest` 接口（见"实时通知方案"章节）。Server 插件无需服务端改动。
+
+---
+
+## 插件位置
+
+两个独立 TypeScript 文件，用户自行选择安装位置：
+
+| 文件 | 类型 | 全局路径 | 项目级路径 |
+|------|------|----------|-----------|
+| `changez.server.ts` | Server 插件（必需） | `~/.config/opencode/plugins/changez.server.ts` | `{project}/.opencode/plugins/changez.server.ts` |
+| `changez.tui.ts` | TUI 插件（可选） | `~/.config/opencode/plugins/changez.tui.ts` | `{project}/.opencode/plugins/changez.tui.ts` |
+
+**为什么拆成两个文件**：OpenCode v1 插件规范要求一个文件只能导出一种类型（`server` 或 `tui`，不能同时存在）。参见"启动模式与插件加载行为"章节。
+
+插件文件自包含，不依赖 npm 包（仅用 Node.js 内置模块 `fs`, `path`, `http`, `https`）。
+
+---
+
+## 配置
+
+### opencode.json 中的插件配置
+
+按 OpenCode 插件规范，配置写在 `opencode.json` 的 `plugin` 数组中。插件名就叫 `changez`：
+
+```jsonc
+// ~/.config/opencode/opencode.json（全局）
+// 方案 A: 元组形式（待验证 opencode 是否支持本地文件 + options）
+{
+  "plugin": [
+    ["changez", {
+      "url": "http://127.0.0.1:8760",
+      "token": "your-secret-token",
+      "source": "opencode",
+      "project": {
+        "name": "my-project"   // 可选，省略则用 directory 的 basename
+      },
+      "logLevel": "info"       // 可选：debug / info / warn / error
+    }]
+  ]
+}
+```
+
+**注意**：上面使用的是 `["changez", { ... }]` 元组形式，要求 opencode 能自动发现 `plugins/` 目录下的 `changez.server.ts` 并传入 options。如果 opencode 不支持此写法，需改用 `file://` 方案（见下方 TUI 配置示例）。
+
+### 配置项说明
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `url` | string | 是 | changez 服务地址 |
+| `token` | string | 否 | Bearer token（服务未设 token 时可省略） |
+| `source` | string | 否 | source 名称，默认 `"opencode"` |
+| `project.name` | string | 否 | project 名称，省略则用 `directory` 的 basename |
+| `logLevel` | string | 否 | 日志级别：`debug` / `info` / `warn` / `error`，默认 `"info"` |
+
+### 配置加载
+
+插件通过 `options` 参数接收配置：
+
+```typescript
+export const ChangezPlugin = async (
+  { client, directory }: PluginInput,
+  options?: Record<string, unknown>,  // ← SDK 的 PluginOptions 是 Record<string, unknown>
+) => { ... }
+```
+
+---
+
+## Project 自动注册
+
+### 时机
+
+插件入口函数执行时自动注册 project（opencode 打开项目时调用插件函数即触发）。
+
+### 流程
+
+1. 取 `directory` 参数（opencode 传入的项目根目录绝对路径）
+2. 构造 project name：配置中的 `project.name`，若无则用 `path.basename(directory)`
+3. `POST /api/projects` → `{ rootPath: directory, name: projectName }`
+4. 如果已存在（409 或类似），静默忽略（幂等）
+5. 如果注册失败（网络错误等），记录日志但不阻塞插件加载
+
+### 请求格式
+
+```json
+POST http://127.0.0.1:8760/api/projects
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "rootPath": "/home/lan/workspace/go/changez",
+  "name": "changez"
+}
+```
+
+### 多项目场景
+
+全局插件 + 多项目时，每次 opencode 打开不同项目，`directory` 不同，插件会自动注册对应 project。一个 opencode 实例同一时间只打开一个项目目录，所以不存在并发注册冲突。
+
+---
+
+## Hook 机制
+
+利用 OpenCode 插件 API 的两个 hook：
+
+### 1. `chat.message` — 记录 model 信息
+
+```typescript
+"chat.message": (input: {
+    sessionID: string;
+    model?: { providerID: string; modelID: string };
+}, output: {
+    message: UserMessage;
+    parts: Part[];
+}) => Promise<void>
+```
+
+- 首次收到消息时，将 `{ providerID, modelID }` 缓存到内存 Map（key: sessionID）
+- 用于后续 snapshot 上报时携带 model 信息
+- sessionModels Map 是模块级变量，插件生命周期内存在，无需显式清理
+
+### 2. `tool.execute.after` — 文件修改后上报
+
+```typescript
+"tool.execute.after": (input: {
+    tool: string;        // 'write' | 'edit' | 'multiedit' | 'apply_patch' | 'bash'
+    sessionID: string;
+    callID: string;
+    args: any;           // 工具调用参数
+}, output: {
+    title: string;
+    output: string;      // 工具执行结果文本
+    metadata: any;
+}) => Promise<void>
+```
+
+- 在文件修改工具执行**之后**触发，此时文件已更新
+- 提取被修改文件的绝对路径
+- 读取文件最新内容
+- 异步 POST 到 changez `/api/snapshot`
+
+### 拦截的工具
+
+| 工具 | 说明 | 路径提取方式 | action |
+|------|------|-------------|--------|
+| `write` | 写入/覆盖文件 | `args.filePath` / `args.path` | `update` |
+| `edit` | 编辑已有文件 | `args.filePath` / `args.path` | `update` |
+| `multiedit` | 批量编辑 | `args.edits[].path` / `args.changes[].path` / `args.files[].path` | `update` |
+| `apply_patch` | 应用 patch | 解析 `*** Update File:` → `update`，`*** Delete File:` → `delete`，`*** Add File:` → `create` | 按 patch 类型 |
+| `bash` | shell 命令 | 仅检测 `rm` 命令 | `delete` |
+
+### ⚠️ bash 工具的覆盖范围限制
+
+`tool.execute.after` hook 只能拦截到 agent **通过工具调用**修改的文件。
+
+- ✅ `write`, `edit`, `multiedit`, `apply_patch` → 走工具通道，hook 能捕获
+- ⚠️ `bash` → 仅能检测 `rm` 删除命令（正则提取）。bash 中通过 `cat >`, `echo >>`, `python3 -c "..."`, `mv` 等命令写入或修改的文件内容，**无法被 hook 捕获**。
+
+**原因**：OpenCode 插件规范中，`bash` 工具的 hook 只能拿到传递给 bash 的命令字符串，拿不到 bash 实际执行后产生的文件系统变更。要覆盖 bash 写入路径需要文件系统级别的 watch（如 inotify/fsnotify），不在当前插件设计范围内。
+
+**影响**：如果 agent 不遵守 OpenCode 规范（规范要求优先使用 Write/Edit 工具而非 bash 命令写文件），通过 bash 创建或修改的文件将不会被 changez 追踪。
+
+### action 区分逻辑
+
+- `write`, `edit`, `multiedit`：统一传 `update`（服务端有双重判断兜底）
+- `apply_patch`：从 patch 文本解析 `*** Add File:` → `create`，`*** Update File:` → `update`，`*** Delete File:` → `delete`
+- `bash rm`：传 `delete`
+
+---
+
+## 请求/响应格式
+
+### Snapshot 请求
+
+```json
+POST http://127.0.0.1:8760/api/snapshot
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "source": "opencode",
+  "sessionId": "ses_1cefbd82dffeMseMj596ar2DLi",
+  "model": "lan-ai/Qwen3.6",
+  "files": [
+    {
+      "path": "/home/lan/workspace/go/changez/internal/handler/snapshot.go",
+      "content": "package handler\nimport ...",
+      "action": "update"
+    }
+  ]
+}
+```
+
+### 响应
+
+```json
+{
+  "results": [
+    { "path": "...", "status": "captured", "versionId": 42 }
+  ],
+  "summary": { "captured": 1, "unchanged": 0, "errors": 0 }
+}
+```
+
+---
+
+## 关键设计决策
+
+### 1. after hook vs before hook
+
+**选择 after hook**。原因：
+- before hook 只能拿到修改前的内容，无法获取新写入的内容
+- after hook 在文件已修改后执行，可以读取最新文件内容
+- 即使工具报错（如写入失败），after hook 仍然触发，此时检查文件是否存在即可
+
+### 2. 同步 vs 异步上报
+
+**选择异步（fire-and-forget）**。原因：
+- 不阻塞 OpenCode 的工具执行流程
+- changez 上报失败不影响正常的编码工作
+- 失败时记录日志，不向用户报错
+
+### 3. 批量合并（debouncing）
+
+**不合并**。每次文件修改立即独立上报。原因：
+- 保持时间线精确，每个操作独立可追溯
+- 用户明确不需要 debouncing
+
+### 4. 与 backup 插件的关系
+
+**完全独立**。原因：
+- backup 插件关注本地文件备份（写 `.opencode/backup/`）
+- changez 插件关注远程版本追踪（POST 到 changez 服务）
+- 职责分离，互不依赖
+
+### 5. bash rm 的处理
+
+对 `bash` 工具的 `rm` 命令，**仅做简单正则提取**（`rm file.go` / `rm -f file.go`），不做完整 shell 解析。原因：
+- shell 命令可能包含管道、通配符等复杂语法，精确解析成本过高
+- 简单覆盖常见场景即可
+- `rm -rf` 等危险命令不处理（目录递归删除不在 scope 内）
+
+### 6. 插件与 changez 服务解耦
+
+**插件按 opencode 规范配置，通过 HTTP API 与服务交互。** 原因：
+- 各 IDE 插件的配置放在各自规范的位置
+- 插件与服务只通过 HTTP API 交互
+- Server 插件无需服务端特殊支持，复用现有 `/api/projects` 和 `/api/snapshot`
+- TUI 插件需要服务端提供 `GET /api/snapshots/latest` 端点（轻量 in-memory 缓存，不影响核心逻辑）
+
+### 7. action 字段区分
+
+**区分 create/update/delete**。原因：
+- 虽然服务端有双重判断兜底，但客户端传准确 action 语义更清晰
+- `apply_patch` 能从 patch 文本直接判断（Add/Update/Delete File）
+- `bash rm` 明显是 delete
+- `edit/multiedit` 是 update（编辑已有文件）
+- `write` 较难区分（after hook 时文件已存在），统一传 `update`
+
+### 8. 日志级别
+
+**插件内部做级别过滤**。配置项 `logLevel` 控制 verbosity，默认 `info`。
+
+日志内容按级别划分：
+
+| 级别 | 内容 |
+|------|------|
+| `debug` | 每次 snapshot 请求详情（文件数、sessionID、tool 类型） |
+| `info` | 插件加载成功、project 注册成功 |
+| `warn` | snapshot 失败、文件读取失败、服务不可达、project 注册失败 |
+| `error` | 不应发生的异常（代码 bug、未捕获错误） |
+
+```typescript
+const LOG_LEVELS = { error: 0, warn: 1, info: 2, debug: 3 }
+
+function log(level: string, message: string, extra?: object) {
+  if (LOG_LEVELS[level] > LOG_LEVELS[cfg.logLevel]) return
+  client.app.log({ body: { service: "changez", level, message, ...extra } })
+}
+```
+
+---
+
+## 错误处理
+
+| 场景 | 行为 |
+|------|------|
+| changez 服务不可达 | 静默失败，记录日志 |
+| token 认证失败 | 静默失败，记录日志 |
+| 文件读取失败（权限/不存在） | 跳过该文件 |
+| 文件大小超限 | 跳过该文件 |
+| project 注册失败（网络错误） | 记录日志，不阻塞插件加载，后续 snapshot 可能失败 |
+| project 已存在（409） | 静默忽略（幂等） |
+| 网络超时（5s） | 放弃本次上报 |
+
+---
+
+## 插件代码结构
+
+```typescript
+// changez.server.ts
+import * as fs from "node:fs"
+import * as path from "node:path"
+import * as http from "node:http"
+import * as https from "node:https"
+
+type ChangezConfig = {
+  url: string;
+  token?: string;
+  source?: string;
+  project?: { name?: string };
+  logLevel?: "debug" | "info" | "warn" | "error";
+}
+
+const LOG_LEVELS = { error: 0, warn: 1, info: 2, debug: 3 }
+
+// ── session → model 缓存 ──────────────────
+const sessionModels = new Map<string, string>()
+
+// ── HTTP 请求辅助（5s 超时） ──────────────
+function httpRequest(
+  cfg: ChangezConfig,
+  method: string,
+  pathStr: string,
+  body?: object,
+): Promise<{ status: number; json?: object }> {
+  const urlObj = new URL(pathStr, cfg.url)
+  const isHttps = urlObj.protocol === "https:"
+  const mod = isHttps ? https : http
+
+  return new Promise((resolve, reject) => {
+    const payload = body ? JSON.stringify(body) : undefined
+    const options = {
+      hostname: urlObj.hostname,
+      port: urlObj.port || (isHttps ? 443 : 80),
+      path: urlObj.pathname + urlObj.search,
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        ...(cfg.token ? { Authorization: `Bearer ${cfg.token}` } : {}),
+      },
+    }
+
+    const req = mod.request(options, (res) => {
+      clearTimeout(timer)
+      let data = ""
+      res.on("data", (chunk) => (data += chunk))
+      res.on("end", () => {
+        let json: object | undefined
+        try { json = JSON.parse(data) } catch {}
+        resolve({ status: res.statusCode ?? 0, json })
+      })
+    })
+
+    const timer = setTimeout(() => {
+      req.destroy(new Error("timeout 5s"))
+    }, 5000)
+
+    req.on("error", (e) => { clearTimeout(timer); reject(e) })
+
+    if (payload) req.write(payload)
+    req.end()
+  })
+}
+
+// ── 路径提取辅助函数 ──────────────────────
+function pickFilePath(args: any): string | undefined { ... }
+function parsePatchTargets(patchText: string): Array<{ path: string; action: string }> { ... }
+function extractRmPaths(command: string): string[] { ... }
+function collectMultieditPaths(args: any): string[] { ... }
+
+// ── 插件入口 ──────────────────────────────
+export const changez = async (
+  { client, directory }: PluginInput,
+  options?: Record<string, unknown>,
+) => {
+  const cfg: ChangezConfig = {
+    url: (options?.url as string) ?? "http://127.0.0.1:8760",
+    token: (options?.token as string) ?? "",
+    source: (options?.source as string) ?? "opencode",
+    project: options?.project as ChangezConfig["project"],
+    logLevel: (options?.logLevel as ChangezConfig["logLevel"]) ?? "info",
+  }
+
+  const projectRoot = path.resolve(directory)
+  const projectName = cfg.project?.name ?? path.basename(projectRoot)
+
+  // ── Logger ──────────────────────────────
+  const log = (level: string, message: string, extra?: object) => {
+    if (LOG_LEVELS[level] > LOG_LEVELS[cfg.logLevel]) return
+    void client.app.log({ body: { service: "changez", level, message, ...extra } })
+  }
+
+  log("info", `loaded (${cfg.url}, project: ${projectName})`)
+
+  // ── 自动注册 project ───────────────────
+  try {
+    const res = await httpRequest(cfg, "POST", "/api/projects", {
+      rootPath: projectRoot,
+      name: projectName,
+    })
+    if (res.status === 201) {
+      log("info", `project registered: ${projectName}`)
+    } else if (res.status !== 409) {
+      log("warn", `project registration failed: ${res.status}`)
+    }
+  } catch (e) {
+    log("warn", `project registration error: ${String(e)}`)
+  }
+
+  return {
+    // 记录 model
+    "chat.message": async (input, _output) => {
+      if (input.model) {
+        sessionModels.set(
+          input.sessionID,
+          `${input.model.providerID}/${input.model.modelID}`,
+        )
+      }
+    },
+
+    // 文件修改后上报
+    "tool.execute.after": async (input, _output) => {
+      const { tool, sessionID } = input
+      const args = input.args
+      const model = sessionModels.get(sessionID) ?? ""
+
+      // 根据工具类型提取文件路径 + action
+      let filePaths: Array<{ path: string; action: string }> = []
+
+      if (tool === "write") {
+        const fp = pickFilePath(args)
+        if (fp) filePaths.push({ path: fp, action: "update" })
+      } else if (tool === "edit") {
+        const fp = pickFilePath(args)
+        if (fp) filePaths.push({ path: fp, action: "update" })
+      } else if (tool === "multiedit") {
+        const paths = collectMultieditPaths(args)
+        filePaths = paths.map(p => ({ path: p, action: "update" }))
+      } else if (tool === "apply_patch") {
+        const patchText = typeof args?.patchText === "string"
+          ? args.patchText
+          : typeof args?.patch === "string"
+            ? args.patch
+            : ""
+        filePaths = parsePatchTargets(patchText)
+      } else if (tool === "bash") {
+        const cmd = typeof args?.command === "string" && args.command != null
+          ? args.command
+          : typeof args?.bash_command === "string" && args.bash_command != null
+            ? args.bash_command
+            : ""
+        const rmPaths = extractRmPaths(cmd)
+        filePaths = rmPaths.map(p => ({ path: p, action: "delete" }))
+      }
+
+      if (filePaths.length === 0) return
+
+      // 读取文件内容
+      const files: Array<{ path: string; content: string; action: string }> = []
+      for (const { path: fp, action } of filePaths) {
+        const absPath = path.isAbsolute(fp)
+          ? path.normalize(fp)
+          : path.normalize(path.join(projectRoot, fp))
+
+        if (action === "delete") {
+          // delete 不需要内容
+          files.push({ path: absPath, content: "", action })
+          continue
+        }
+
+        try {
+          const stat = fs.statSync(absPath)
+          if (stat.size > 10 * 1024 * 1024) {  // 10MB
+            log("debug", `skip large file (>10MB): ${absPath}`)
+            continue
+          }
+          const content = fs.readFileSync(absPath, "utf8")
+          files.push({ path: absPath, content, action })
+        } catch (e) {
+          log("debug", `read failed: ${absPath}: ${String(e)}`)
+        }
+      }
+
+      if (files.length === 0) return
+
+      // 异步上报（不阻塞）
+      httpRequest(cfg, "POST", "/api/snapshot", {
+        source: cfg.source,
+        sessionId: sessionID,
+        model,
+        files,
+      }).then(res => {
+        log("debug", `snapshot sent: ${files.length} file(s)`, { tool, sessionID })
+        if (res.status >= 400) {
+          log("warn", `snapshot failed: ${res.status}`)
+        }
+      }).catch(() => {
+        log("warn", "snapshot request error")
+      })
+    },
+  }
+}
+```
+
+---
+
+## 设计决策汇总
+
+| # | 问题 | 结论 |
+|---|------|------|
+| 1 | hook 选择 | `tool.execute.after`（修改后读取文件内容） |
+| 2 | 同步/异步 | 异步 fire-and-forget，不阻塞 opencode |
+| 3 | debouncing | 不合并，每次修改独立上报 |
+| 4 | backup 插件关系 | 完全独立 |
+| 5 | bash rm 处理 | 简单正则提取，不做完整 shell 解析 |
+| 6 | 插件与服务解耦 | 按 opencode 规范配置，通过 HTTP API 交互 |
+| 7 | action 字段 | 区分 create/update/delete，write 传 update |
+| 8 | 日志级别 | 插件内部过滤，配置 `logLevel`，默认 `info` |
+| 9 | bash 覆盖范围 | 仅捕获 rm，无法捕获 bash 写入（设计边界） |
+| 10 | project 注册 | 启动时自动注册，幂等 |
+| 11 | TUI 通知方案 | TUI 直连 Go 后端轮询，不依赖 Server 状态文件 |
+| 12 | 插件间通信 | 不通信 — 各自独立直连 Go 后端 |
+
+---
+
+## 待验证
+
+### 插件配置传递方式
+
+当前 opencode.json 中的 `plugin` 数组只列了 npm 包名（如 `"oh-my-openagent"`），而本地 `.ts` 文件放在 `~/.config/opencode/plugins/` 目录下由 opencode 自动发现加载。backup 插件就是这种模式，但它不需要配置参数。
+
+我们的 changez 插件需要 `url`、`token` 等配置，设计上通过 `opencode.json` 的 `["changez", { ... }]` 元组形式传入。
+
+**待验证：** opencode 是否支持将本地 `.ts` 文件写入 `plugin` 数组并传递 options？
+
+**备选方案：** 如果不支持，改为从独立配置文件读取（如 `~/.config/opencode/changez.json`），插件启动时自行加载。
+
+---
+
+## 启动模式与插件加载行为
+
+OpenCode 有三种常见启动方式，Server 插件在不同模式下的加载行为有差异。
+
+### 三种模式对比
+
+| 维度 | `opencode` (直启) | `opencode -s <id>` (恢复会话) | `opencode attach <url>` |
+|------|-------------------|------------------------------|------------------------|
+| Server 在哪 | 本机同进程 | 本机同进程 | **目标 URL 所在机器** |
+| Server 插件加载 | ✅ 本地加载 | ✅ 本地加载 | ❌ 不加载（远程已有） |
+| `tool.execute.after` hook | ✅ 本地触发 | ✅ 本地触发 | ⚠️ 取决于 Server 在哪 |
+| TUI 启动 | ✅ | ✅ | ✅ |
+| TUI 插件加载 | ✅ | ✅ | ✅ |
+| `session.created` 事件 | ✅（新建时） | ❌（已有 session） | ⚠️ 取决于是否新建 |
+
+### 关键澄清：attach 到本地 Server
+
+`opencode attach` 本身不决定是否加载 Server 插件 — **决定因素是 Server 进程在哪台机器上**。
+
+```
+场景 A: opencode attach http://localhost:4096
+  ┌─────────────────────────────┐
+  │  本机 Server (已加载 changez) │ ← Server 插件在这里运行
+  └──────────┬──────────────────┘
+             │ HTTP/WebSocket
+             ▼
+      ┌──────────────┐
+      │  opencode    │ ← TUI 只连上来显示界面
+      │  attach      │     Server 插件不会在 TUI 端加载
+      └──────────────┘
+  ✅ changez 正常工作 — hook 在本机 Server 上触发
+
+场景 B: opencode attach http://remote-server:4096
+  ┌──────────────┐        ┌─────────────────────────────┐
+  │  opencode    │────────│  远程 Server                 │
+  │  attach      │        │  (必须也装了 changez 插件)    │
+  └──────────────┘        └─────────────────────────────┘
+  ⚠️ changez 是否工作取决于远程 Server 是否加载了该插件
+```
+
+**结论**：只要 Server 在本机（无论直启、恢复会话、还是 attach 到 localhost），changez Server 插件都能正常工作。attach 到远程是唯一失效的场景。
+
+### 插件加载时机
+
+插件在应用**启动时加载一次**，不随 session 生命周期重新初始化。
+
+- **Server 插件**：Server 启动时由 Plugin Service layer 加载，调用构造函数获取 hooks，后续通过 hook 触发逻辑
+- **TUI 插件**：TUI 挂载时由 TUI Plugin Runtime 加载，调用 `tui(api, options, meta)` 初始化 UI
+- **插件加载与 session 无关**：`opencode -s <id>` 恢复已有 session 时，插件状态与新 session 完全一致
+
+### 插件类型约束
+
+OpenCode v1 插件规范要求一个文件只能导出一种类型的插件（`server` 或 `tui`，不能同时存在）：
+
+```typescript
+// shared.ts:293-294
+if (server !== undefined && tui !== undefined) {
+  throw new TypeError(`Plugin ${spec} must default export either server() or tui(), not both`)
+}
+```
+
+因此 changez 的 Server 插件和 TUI 状态展示插件需要拆分为两个独立文件。
+
+---
+
+## TUI 状态展示小插件计划
+
+### 动机
+
+当前 changez Server 插件完全在后台运行，用户在 TUI 界面看不到任何工作状态：
+- 插件是否加载成功？
+- changez 服务是否连通？
+- snapshot 上报是否成功？
+- 累计上报了多少文件？
+
+需要一个轻量 TUI 插件解决"黑盒"问题。
+
+### 架构
+
+```
+┌──────────────────────────────────────────────┐
+│  OpenCode                                   │
+│                                              │
+│  ┌──────────────────┐      ┌──────────────────┐  │
+│  │ changez.server.ts│      │ changez.tui.ts   │  │
+│  │ (Server 插件)     │      │ (TUI 插件)        │  │
+│  │                  │      │                  │  │
+│  │ tool.execute.    │      │ toast: 加载结果   │  │
+│  │   after          │      │ toast: 编辑通知   │  │
+│  │ chat.message     │      │                  │  │
+│  └────────┬─────────┘      └────────┬─────────┘  │
+│           │ POST /api/snapshot       │ GET /api/  │
+│           │                          │   snapshots/latest│
+│           ▼                          ▼              │
+│     changez service :8760                      │
+└──────────────────────────────────────────────┘
+```
+
+两个插件完全独立，各自直连 Go 后端。不共享文件、不互相通信。
+
+### TUI 小插件设计
+
+**文件**: `changez.tui.ts`（与 `changez.server.ts` 同级）
+**依赖**: 零外部依赖，仅用 opencode TUI API
+
+#### 功能清单
+
+| 功能 | API | 触发时机 |
+|------|-----|----------|
+| Toast 通知（加载结果） | `api.ui.toast()` | 插件初始化时 |
+| Sidebar 状态显示 | `api.ui.Slot({ name: "sidebar_content" })` | 常驻显示 |
+| 服务连通性检查 | 独立 HTTP GET `/api/health` | 初始化 + 定期轮询 |
+| 错误通知 | `api.attention.notify()` | 连续上报失败时 |
+
+#### 状态显示内容
+
+Sidebar slot 中显示一行简洁状态：
+
+```
+📦 changez: 12 snapshots · last: 3s ago · ✅ OK
+```
+
+失败时：
+
+```
+📦 changez: 12 snapshots · ⚠️ Service unreachable
+```
+
+#### 实现思路
+
+已选定 TUI 直连 Go 后端方案（见下方"实时通知方案"）。TUI 插件通过轮询 `GET /api/snapshots/latest` 获取最新 snapshot 状态，完全独立于 Server 插件。
+
+```typescript
+// changez.tui.ts (伪代码)
+export default {
+  id: "changez-tui",
+  tui: async (api, options) => {
+    const cfg = { url: options?.url ?? "http://127.0.0.1:8760" }
+    const projectRoot = process.cwd()
+
+    // 1. 初始化时 health check + toast 通知
+    try {
+      const res = await httpGet(`${cfg.url}/api/health`)
+      api.ui.toast({
+        variant: "success",
+        title: "Changez",
+        message: `Connected (${cfg.url})`,
+        duration: 2000,
+      })
+    } catch {
+      api.ui.toast({
+        variant: "warning",
+        title: "Changez",
+        message: "Service unreachable",
+        duration: 3000,
+      })
+      return  // 服务不可达，不加载 UI
+    }
+
+    // 2. 轮询 snapshot 状态 — 直连 Go 后端
+    let lastContent = ''
+    let silentUntil = 0
+
+    setInterval(() => {
+      const url = `${cfg.url}/api/snapshots/latest?projectRoot=${encodeURIComponent(projectRoot)}`
+      httpGet(url).then(res => {
+        if (res.status === 200 && res.json) {
+          const content = JSON.stringify(res.json)
+          if (content !== lastContent) {
+            lastContent = content
+            const data = res.json
+            if (Date.now() < silentUntil) return
+            silentUntil = Date.now() + 30000
+            // 弹 toast 通知
+            api.ui.toast({ variant: 'success', title: 'Changez', message: `${data.captured} captured`, duration: 3000 })
+          }
+        }
+      }).catch(() => {})
+    }, 2000)
+  },
+}
+```
+
+#### 前置条件
+
+TUI 实时通知需要 changez 提供 `GET /api/snapshots/latest` 端点（见"实时通知方案"章节）。
+
+如果要做 P1（Sidebar 常驻状态），可复用同一端点，提高轮询频率即可。现有 `GET /api/stats` 也可用于更丰富的统计展示。
+
+#### 实时通知方案：TUI 直连 Go 后端
+
+**问题**：TUI 的 toast 通知只在插件启动时触发一次。Server 插件的 `tool.execute.after` hook 捕获到文件修改后，无法直接通知 TUI 弹出 toast，因为 OpenCode 插件框架不提供插件间通信机制（无 pub/sub、无事件总线、无共享状态）。
+
+**方案对比**：
+| 方案 | 优点 | 缺点 |
+|------|------|------|
+| **1. TUI 直接轮询 changez 服务** | **插件完全解耦，支持跨主机** | **需要新增 API 端点** |
+| ~~2. 状态文件 + TUI 轮询~~ | ~~零服务端改动~~ | ~~仅支持同主机，插件耦合~~ |
+| 3. SSE/WebSocket 通知 | 实时推送 | 复杂度高，改动大 |
+
+**选定方案 1：TUI 直接轮询 Go 后端新增的 `GET /api/snapshots/latest` 端点。** Server 和 TUI 插件完全独立，各自直连 Go 后端，不互相依赖。
+
+##### 新增 API 端点
+
+```
+GET /api/snapshots/latest?projectRoot=/absolute/path
+```
+
+| 参数 | 必填 | 说明 |
+|------|------|------|
+| `projectRoot` | 是 | 项目根路径（绝对路径，与 Server 注册时的 `rootPath` 一致） |
+
+**响应（200）**：
+```json
+{
+  "updatedAt": "2026-05-19T10:30:00Z",
+  "captured": 2,
+  "unchanged": 1,
+  "files": [
+    { "path": "/abs/path/foo.ts", "versionId": 42 },
+    { "path": "/abs/path/bar.go", "versionId": 43 }
+  ]
+}
+```
+
+如果该项目还没有 snapshot 记录，返回 `200 null`。
+
+##### Go 后端实现
+
+**in-memory 缓存**（`internal/handler/common.go`）：
+
+```go
+type Handler struct {
+    // ... 现有字段
+    // 每个 projectRoot → 最新一次的 snapshot 结果
+    latestSnapshots sync.Map // key: projectRoot (string), value: snapshotStatus
+}
+
+type snapshotStatus struct {
+    UpdatedAt string     `json:"updatedAt"`
+    Captured  int        `json:"captured"`
+    Unchanged int        `json:"unchanged"`
+    Files     []snapFile `json:"files"`
+}
+
+type snapFile struct {
+    Path      string `json:"path"`
+    VersionID int64  `json:"versionId"`
+}
+```
+
+**HandleSnapshot 处理完后写入缓存**（`internal/handler/snapshot.go`）：
+
+在 `HandleSnapshot` 末尾，`writeJSON` 之前，聚合本次 snapshot 的结果并写入缓存。
+
+注意：一个 snapshot 请求可能包含多个项目的文件。需要对每个 project 分别写入缓存。
+
+```go
+// 在 HandleSnapshot 返回前，HandleSnapshot 内部已有 results []fileResult 和 summary snapshotSummary
+// 按 projectRoot 聚合 captured 文件
+projectFiles := make(map[string][]snapFile)
+for _, fr := range results {
+    if fr.Status != "captured" {
+        continue
+    }
+    proj := h.DB.FindProjectByPath(fr.Path)
+    if proj == nil {
+        continue
+    }
+    projectFiles[proj.RootPath] = append(projectFiles[proj.RootPath], snapFile{
+        Path:      fr.Path,
+        VersionID: fr.VersionID,
+    })
+}
+
+// 为每个有 captured 文件的项目写入缓存
+for root, files := range projectFiles {
+    h.latestSnapshots.Store(root, &snapshotStatus{
+        UpdatedAt: time.Now().UTC().Format(time.RFC3339),
+        Captured:  len(files),
+        Files:     files,
+    })
+}
+```
+
+**新增 handler**（`internal/handler/snapshot.go`）：
+
+```go
+func (h *Handler) HandleLatestSnapshot(w http.ResponseWriter, r *http.Request) {
+    if r.Method != http.MethodGet {
+        writeError(w, 405, "METHOD_NOT_ALLOWED", "仅支持 GET")
+        return
+    }
+    projectRoot := r.URL.Query().Get("projectRoot")
+    if projectRoot == "" {
+        writeError(w, 400, "INVALID_REQUEST", "projectRoot 不能为空")
+        return
+    }
+    val, ok := h.latestSnapshots.Load(projectRoot)
+    if !ok {
+        writeJSON(w, 200, nil)
+        return
+    }
+    writeJSON(w, 200, val)
+}
+```
+
+**注册路由**（`internal/router/router.go`）：
+
+```go
+apiMux.HandleFunc("/api/snapshots/latest", h.HandleLatestSnapshot)
+```
+
+##### TUI 端改动（`changez.tui.ts`）
+
+TUI 插件需要自己的 HTTP 辅助函数来解析 JSON 响应（与 Server 插件的 `httpRequest` 类似，但更简单 —— 只做 GET）：
+
+```typescript
+import * as http from "node:http"
+import * as https from "node:https"
+import * as path from "node:path"
+
+function httpGet(urlStr: string, token?: string): Promise<{ status: number; json?: object }> {
+  const url = new URL(urlStr)
+  const mod = url.protocol === "https:" ? https : http
+  return new Promise((resolve, reject) => {
+    const options = {
+      hostname: url.hostname,
+      port: url.port || (url.protocol === "https:" ? 443 : 80),
+      path: url.pathname + url.search,
+      method: "GET",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }
+    const req = mod.request(options, (res) => {
+      let data = ""
+      res.on("data", (chunk) => (data += chunk))
+      res.on("end", () => {
+        let json: object | undefined
+        try { json = JSON.parse(data) } catch {}
+        resolve({ status: res.statusCode ?? 0, json })
+      })
+    })
+    const timer = setTimeout(() => req.destroy(new Error("timeout 5s")), 5000)
+    req.on("error", (e) => { clearTimeout(timer); reject(e) })
+    req.end()
+  })
+}
+
+const tui = async (api: TuiPluginApi, options: PluginOptions): Promise<void> => {
+  const cfg = {
+    url: (options?.url as string) ?? "http://127.0.0.1:8760",
+    token: (options?.token as string) ?? "",
+  };
+
+  // 1. 初始化 health check toast
+  try {
+    const res = await httpGet(`${cfg.url}/api/health`, cfg.token);
+    api.ui.toast({
+      variant: "success",
+      title: "Changez",
+      message: `Connected (${cfg.url})`,
+      duration: 2000,
+    })
+  } catch {
+    api.ui.toast({
+      variant: "warning",
+      title: "Changez",
+      message: "Service unreachable",
+      duration: 3000,
+    })
+    return
+  }
+
+  // 2. 轮询 snapshot 状态
+  const projectRoot = process.cwd();
+  let lastContent = '';
+  let silentUntil = 0;
+
+  setInterval(() => {
+    const url = `${cfg.url}/api/snapshots/latest?projectRoot=${encodeURIComponent(projectRoot)}`;
+    httpGet(url, cfg.token).then(res => {
+      if (res.status === 200 && res.json) {
+        const content = JSON.stringify(res.json);
+        if (content !== lastContent) {
+          lastContent = content;
+          const data = res.json;
+
+          if (Date.now() < silentUntil) return;
+          silentUntil = Date.now() + 30000;
+
+          const fileNames = data.files
+            .map((f) => path.basename(f.path))
+            .join(', ');
+
+          api.ui.toast({
+            variant: 'success',
+            title: 'Changez',
+            message: `${data.captured} captured: ${fileNames}`,
+            duration: 3000,
+          });
+        }
+      }
+    }).catch(() => {}); // 静默失败，继续轮询
+  }, 2000);
+};
+```
+
+##### Server 端改动（`changez.server.ts`）
+
+**删除** `.changez-status.json` 状态文件的写入逻辑。不再需要维护状态文件。
+
+##### 关键设计点
+
+| 设计选择 | 原因 |
+|---------|------|
+| in-memory 缓存 | 轻量，重启丢失影响小（仅丢失最后一次 toast） |
+| `projectRoot` 作为 key | 与 Server 注册时的 `rootPath` 一致，精确匹配 |
+| 轮询间隔 2s | 足够快又不耗资源（HTTP GET 请求） |
+| 30s 防 spam | 频繁编辑时不会弹太多 toast |
+| `200 null` 表示无数据 | 与 `404` 区分，TUI 无需特殊处理 |
+| TUI 用 `process.cwd()` | 与 opencode 启动目录一致 |
+
+##### 时序图
+
+```
+Server Plugin                    Go Backend                     TUI Plugin
+    │                                │                              │
+    │  POST /api/snapshot            │                              │
+    │──────────────────────────────>│                              │
+    │                                │  处理 snapshot               │
+    │                                │  latestSnapshots[root] = ... │
+    │  ← 200 {results, summary}     │                              │
+    │<──────────────────────────────│                              │
+    │                                │                              │
+    │                                │  GET /api/snapshots/latest   │
+    │                                │<────────────────────────────│
+    │                                │  ← 200 {captured, files}    │
+    │                                │────────────────────────────>│
+    │                                │                          弹 toast
+```
+
+##### 风险点
+
+| 风险 | 影响 | 缓解 |
+|------|------|------|
+| in-memory 缓存重启丢失 | 丢失最后一次 snapshot 的 toast | 可接受，用户不会注意到 |
+| TUI 启动早于 Server 注册项目 | 轮询返回 `null`，静默跳过 | 等 Server 发送第一个 snapshot 后自然生效 |
+| `process.cwd()` 与 `projectRoot` 不一致 | TUI 找不到数据 | TUI 应尝试遍历 `latestSnapshots` 的所有 key，找第一个有数据的 project 返回（降级策略）。或未来支持 TUI 配置 `projectRoot` 字段 |
+
+#### 轮询策略（P1 Sidebar 常驻状态）
+
+- **频率**：5-10 秒一次。不是实时监控面板，这个间隔足以让用户感知变化
+- **触发条件**：仅在 session idle 时刷新，避免在对话过程中频繁轮询
+- **失败处理**：连续 3 次请求失败后暂停轮询，仅 toast 一次警告
+
+#### 配置
+
+两个插件分别注册，需要重复指定 `url`（目前 opencode 不支持配置继承或共享）：
+
+```jsonc
+// opencode.json
+{
+  "plugin": [
+    // Server 插件 — 核心拦截逻辑
+    ["file://./client/opencode/changez.server.ts", {
+      "url": "http://127.0.0.1:8760",
+      "token": "xxx",
+      "logLevel": "info"
+    }],
+    // TUI 插件 — 状态展示（可选）
+    ["file://./client/opencode/changez.tui.ts", {
+      "url": "http://127.0.0.1:8760",
+      "token": "xxx"   // 需要与 Server 插件一致，否则 /api/snapshots/latest 会 401
+    }]
+  ]
+}
+```
+
+**配置重复问题**：`url` 在两个插件中重复出现。如果服务地址变更需要改两处。
+
+**备选方案**（需要改服务端）：让 TUI 插件从 Server 插件的日志中解析状态（`client.app.log` + `api.event.on`），这样 TUI 插件不需要知道 `url`/`token`，配置只需写一份。但 opencode 的 Bus 事件目前不暴露 `app.log` 给 TUI 层，此方案暂不可行。
+
+### 优先级
+
+| 阶段 | 内容 | 优先级 |
+|------|------|--------|
+| P0 | Toast 通知（加载成功/失败） | 高 — 最小改动，立即可做 |
+| P1 | Sidebar slot 常驻状态 | 中 — 需要 stats API 或日志解析 |
+| P2 | 错误告警（attention notify） | 低 — 锦上添花 |
+
+### 插件导出格式注意
+
+当前 `changez.ts` 使用 named export (`export const changez = createPlugin`)，opencode 的 plugin loader 在 "detect" 模式下可以识别，但 v1 规范推荐 default export 格式。长期建议改为：
+
+```typescript
+export default {
+  id: "changez",
+  server: createPlugin,
+}
+```
+

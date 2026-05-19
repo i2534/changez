@@ -1,0 +1,46 @@
+package handler
+
+import (
+	"encoding/json"
+	"net/http"
+	"sync"
+
+	"github.com/changez/changez/internal/config"
+	"github.com/changez/changez/internal/db"
+	"github.com/changez/changez/internal/storage"
+)
+
+type Handler struct {
+	DB         *db.DB
+	BlobStore  *storage.BlobStore
+	DeltaStore *storage.DeltaStore
+	Config     *config.Config
+	SourceIDs  map[string]int64
+	fileMuMap  sync.Map
+}
+
+func NewHandler(database *db.DB, bs *storage.BlobStore, ds *storage.DeltaStore, cfg *config.Config, sourceIDs map[string]int64) *Handler {
+	return &Handler{
+		DB:         database,
+		BlobStore:  bs,
+		DeltaStore: ds,
+		Config:     cfg,
+		SourceIDs:  sourceIDs,
+	}
+}
+
+func writeJSON(w http.ResponseWriter, status int, data any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(data)
+}
+
+func writeError(w http.ResponseWriter, status int, code, message string) {
+	resp := map[string]any{
+		"error": map[string]string{
+			"code":    code,
+			"message": message,
+		},
+	}
+	writeJSON(w, status, resp)
+}

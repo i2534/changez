@@ -1,0 +1,103 @@
+package handler
+
+import (
+	"encoding/json"
+	"log/slog"
+	"net/http"
+	"os"
+	"sync"
+
+	"github.com/changez/changez/internal/compact"
+	"github.com/changez/changez/internal/config"
+	"github.com/changez/changez/internal/db"
+	"github.com/changez/changez/internal/storage"
+)
+
+type Handler struct {
+	DB         *db.DB
+	BlobStore  *storage.BlobStore
+	DeltaStore *storage.DeltaStore
+	Config     *config.Config
+	SourceIDs  map[string]int64
+	Compact    *compact.Compactor
+	Logger     *slog.Logger
+	fileMuMap  *sync.Map
+}
+
+func (h *Handler) getFileLock(fileID int64) *sync.RWMutex {
+	mu, _ := h.fileMuMap.LoadOrStore(fileID, &sync.RWMutex{})
+	return mu.(*sync.RWMutex)
+}
+
+func NewHandler(database *db.DB, bs *storage.BlobStore, ds *storage.DeltaStore, cfg *config.Config, sourceIDs map[string]int64, fileMuMap *sync.Map) *Handler {
+	return &Handler{
+		DB:         database,
+		BlobStore:  bs,
+		DeltaStore: ds,
+		Config:     cfg,
+		SourceIDs:  sourceIDs,
+		fileMuMap:  fileMuMap,
+		Logger:     NewLogger(cfg),
+	}
+}
+
+// NewLogger 根据配置创建 slog.Logger。
+// Level 默认 "info"；File 指定则输出到文件，否则 stderr。
+func NewLogger(cfg *config.Config) *slog.Logger {
+	level := slog.LevelInfo
+	switch cfg.Log.Level {
+	case "debug":
+		level = slog.LevelDebug
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	}
+
+	opts := slog.HandlerOptions{
+		Level: level,
+	}
+
+	var h slog.Handler
+	if cfg.Log.File != "" {
+		f, err := os.OpenFile(cfg.Log.File, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			slog.Default().Warn("open log file failed, using stderr", "file", cfg.Log.File, "error", err)
+			h = slog.NewTextHandler(os.Stderr, &opts)
+		} else {
+			h = slog.NewTextHandler(f, &opts)
+		}
+	} else {
+		h = slog.NewTextHandler(os.Stderr, &opts)
+	}
+
+	return slog.New(h)
+}
+
+func (h *Handler) tryCompact(fileID int64) {
+	if h.Compact == nil {
+		return
+	}
+	compacted, err := h.Compact.CheckAndCompactLocked(fileID)
+	if err != nil {
+		h.Logger.Error("compact check failed", "file_id", fileID, "error", err)
+	} else if compacted {
+		h.Logger.Info("compact completed", "file_id", fileID)
+	}
+}
+
+func writeJSON(w http.ResponseWriter, status int, data any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(data)
+}
+
+func writeError(w http.ResponseWriter, status int, code, message string) {
+	resp := map[string]any{
+		"error": map[string]string{
+			"code":    code,
+			"message": message,
+		},
+	}
+	writeJSON(w, status, resp)
+}

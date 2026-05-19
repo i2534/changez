@@ -1,0 +1,204 @@
+package handler
+
+import (
+	"fmt"
+	"net/http"
+	"strconv"
+	"strings"
+
+	"github.com/sergi/go-diff/diffmatchpatch"
+)
+
+func (h *Handler) HandleDiff(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "仅支持 GET")
+		return
+	}
+
+	path := extractPathFromURL(r.URL.Path, "/api/files/", "/diff")
+	if path == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "path 参数缺失")
+		return
+	}
+
+	q := r.URL.Query()
+	fromStr := q.Get("from")
+	toStr := q.Get("to")
+
+	if fromStr == "" || toStr == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "需要 from 和 to 参数")
+		return
+	}
+
+	from, err := strconv.ParseInt(fromStr, 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", fmt.Sprintf("无效的 from 版本号: %s", fromStr))
+		return
+	}
+
+	to, err := strconv.ParseInt(toStr, 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", fmt.Sprintf("无效的 to 版本号: %s", toStr))
+		return
+	}
+
+	ctx := r.Context()
+	h.Logger.Debug("diff request", "path", path, "from", from, "to", to)
+	project, err := h.DB.FindProjectByPath(ctx, path)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "PROJECT_NOT_FOUND", err.Error())
+		return
+	}
+
+	relPath := path
+	rootPath := project["rootPath"].(string)
+	if len(path) > len(rootPath) && path[:len(rootPath)] == rootPath {
+		relPath = strings.TrimPrefix(path[len(rootPath):], "/")
+	}
+
+	file, err := h.DB.GetFileByPath(ctx, project["id"].(int64), relPath)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "FILE_NOT_FOUND", err.Error())
+		return
+	}
+
+	fileID := file["id"].(int64)
+
+	fileMu := h.getFileLock(fileID)
+	fileMu.RLock()
+	defer fileMu.RUnlock()
+
+	verA, err := h.DB.GetVersion(ctx, from)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "VERSION_NOT_FOUND", fmt.Sprintf("版本 %d 不存在: %v", from, err))
+		return
+	}
+	verB, err := h.DB.GetVersion(ctx, to)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "VERSION_NOT_FOUND", fmt.Sprintf("版本 %d 不存在: %v", to, err))
+		return
+	}
+
+	if verA["fileID"].(int64) != fileID {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", fmt.Sprintf("版本 %d 不属于该文件", from))
+		return
+	}
+	if verB["fileID"].(int64) != fileID {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", fmt.Sprintf("版本 %d 不属于该文件", to))
+		return
+	}
+
+	if verA["action"].(string) == "delete" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", fmt.Sprintf("版本 %d 为 delete 状态，无法参与 diff", from))
+		return
+	}
+	if verB["action"].(string) == "delete" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", fmt.Sprintf("版本 %d 为 delete 状态，无法参与 diff", to))
+		return
+	}
+
+	var diffs []diffmatchpatch.Diff
+	isAdjacentDelta := false
+
+	if verB["storageMode"].(string) == "delta" && verB["baseID"] != nil && *verB["baseID"].(*int64) == verA["id"].(int64) {
+		offset := verB["deltaOffset"].(*int64)
+		if offset != nil {
+			_, readDiffs, _, err := h.DeltaStore.ReadEntry(fileID, *offset)
+			if err == nil {
+				diffs = readDiffs
+				isAdjacentDelta = true
+			}
+		}
+	}
+
+	if !isAdjacentDelta {
+		contentA, err := h.rebuildContent(ctx, verA)
+		if err != nil {
+			h.Logger.Error("diff rebuild failed", "path", path, "version", from, "error", err)
+			writeError(w, http.StatusInternalServerError, "CORRUPTED_DATA", fmt.Sprintf("重建版本 %d 内容失败: %v", from, err))
+			return
+		}
+		contentB, err := h.rebuildContent(ctx, verB)
+		if err != nil {
+			h.Logger.Error("diff rebuild failed", "path", path, "version", to, "error", err)
+			writeError(w, http.StatusInternalServerError, "CORRUPTED_DATA", fmt.Sprintf("重建版本 %d 内容失败: %v", to, err))
+			return
+		}
+
+		dmp := diffmatchpatch.New()
+		diffs = dmp.DiffMain(string(contentA), string(contentB), true)
+		diffs = dmp.DiffCleanupSemantic(diffs)
+	}
+
+	unified := renderUnifiedDiff(path, verA["changedAt"].(string), verB["changedAt"].(string), diffs)
+
+	resp := map[string]any{
+		"path": path,
+		"from": from,
+		"to":   to,
+		"diff": unified,
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func renderUnifiedDiff(filePath, timeA, timeB string, diffs []diffmatchpatch.Diff) string {
+	var b strings.Builder
+
+	b.WriteString(fmt.Sprintf("--- a/%s\t%s\n", filePath, timeA))
+	b.WriteString(fmt.Sprintf("+++ b/%s\t%s\n", filePath, timeB))
+
+	type lineEntry struct {
+		op   rune
+		text string
+	}
+
+	var allLines []lineEntry
+	for _, d := range diffs {
+		text := d.Text
+		lines := strings.Split(text, "\n")
+		for _, line := range lines {
+			if d.Type == diffmatchpatch.DiffEqual {
+				allLines = append(allLines, lineEntry{' ', line})
+			} else if d.Type == diffmatchpatch.DiffInsert {
+				allLines = append(allLines, lineEntry{'+', line})
+			} else if d.Type == diffmatchpatch.DiffDelete {
+				allLines = append(allLines, lineEntry{'-', line})
+			}
+		}
+	}
+	if len(allLines) > 0 && allLines[len(allLines)-1].text == "" {
+		allLines = allLines[:len(allLines)-1]
+	}
+
+	startA, startB := 1, 1
+	countA, countB := 0, 0
+	for _, l := range allLines {
+		switch l.op {
+		case ' ':
+			countA++
+			countB++
+		case '-':
+			countA++
+		case '+':
+			countB++
+		}
+	}
+
+	if countA == 0 && countB == 0 {
+		return b.String()
+	}
+
+	b.WriteString(fmt.Sprintf("@@ -%d,%d +%d,%d @@\n", startA, countA, startB, countB))
+
+	for _, l := range allLines {
+		if l.op == ' ' {
+			b.WriteString(" " + l.text + "\n")
+		} else if l.op == '-' {
+			b.WriteString("-" + l.text + "\n")
+		} else if l.op == '+' {
+			b.WriteString("+" + l.text + "\n")
+		}
+	}
+
+	return b.String()
+}

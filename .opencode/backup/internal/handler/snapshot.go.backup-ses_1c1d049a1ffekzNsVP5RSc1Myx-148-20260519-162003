@@ -1,0 +1,353 @@
+package handler
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/sergi/go-diff/diffmatchpatch"
+
+	"github.com/changez/changez/internal/storage"
+)
+
+type SnapshotRequest struct {
+	Source    string         `json:"source"`
+	SessionID string         `json:"sessionId,omitempty"`
+	Model     string         `json:"model,omitempty"`
+	Files     []SnapshotFile `json:"files"`
+}
+
+type SnapshotFile struct {
+	Path    string `json:"path"`
+	Content string `json:"content,omitempty"`
+	Action  string `json:"action,omitempty"`
+	Message string `json:"message,omitempty"`
+}
+
+type SnapshotResult struct {
+	Path      string `json:"path"`
+	Status    string `json:"status"`
+	VersionID *int64 `json:"versionId,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+type SnapshotResponse struct {
+	Results []SnapshotResult `json:"results"`
+	Summary SnapshotSummary  `json:"summary"`
+}
+
+type SnapshotSummary struct {
+	Captured  int `json:"captured"`
+	Unchanged int `json:"unchanged"`
+	Errors    int `json:"errors"`
+}
+
+func (h *Handler) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "仅支持 POST")
+		return
+	}
+
+	var req SnapshotRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.Logger.Warn("snapshot parse error", "error", err)
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", fmt.Sprintf("请求体解析失败: %v", err))
+		return
+	}
+
+	sourceID, ok := h.SourceIDs[req.Source]
+	if !ok {
+		h.Logger.Warn("snapshot invalid source", "source", req.Source)
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", fmt.Sprintf("不支持的 source: %s", req.Source))
+		return
+	}
+
+	if len(req.Files) == 0 {
+		h.Logger.Warn("snapshot empty files")
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "files 不能为空")
+		return
+	}
+
+	h.Logger.Info("snapshot request",
+		"file_count", len(req.Files),
+		"source", req.Source,
+		"session_id", req.SessionID,
+		"model", req.Model,
+	)
+
+	results := h.ProcessSnapshot(r.Context(), &req)
+
+	h.updateLatestSnapshotCache(results)
+
+	summary := SnapshotSummary{}
+	for _, r := range results {
+		switch r.Status {
+		case "captured":
+			summary.Captured++
+		case "unchanged":
+			summary.Unchanged++
+		case "error":
+			summary.Errors++
+		}
+	}
+
+	resp := SnapshotResponse{
+		Results: results,
+		Summary: summary,
+	}
+	h.Logger.Info("snapshot complete",
+		"captured", summary.Captured,
+		"unchanged", summary.Unchanged,
+		"errors", summary.Errors,
+	)
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// rebuildContent 根据版本记录重建完整文件内容。
+func (h *Handler) rebuildContent(ctx context.Context, ver map[string]any) ([]byte, error) {
+	storageMode := ver["storageMode"].(string)
+
+	switch storageMode {
+	case "blob":
+		hash := ver["blobHash"].(*string)
+		if hash == nil {
+			return nil, fmt.Errorf("blob 模式但 hash 为空")
+		}
+		return h.BlobStore.Read(*hash)
+
+	case "delta":
+		return h.rebuildFromDeltaChain(ctx, ver)
+
+	case "delete":
+		return nil, fmt.Errorf("delete 版本无内容可恢复")
+
+	default:
+		return nil, fmt.Errorf("不支持的存储模式: %s", storageMode)
+	}
+}
+
+// rebuildFromDeltaChain 从指定版本回溯到最近的 blob checkpoint，重建完整内容。
+func (h *Handler) rebuildFromDeltaChain(ctx context.Context, ver map[string]any) ([]byte, error) {
+	dmp := diffmatchpatch.New()
+
+	type deltaStep struct {
+		diffs []diffmatchpatch.Diff
+	}
+
+	var steps []deltaStep
+	currentVer := ver
+
+	for {
+		switch currentVer["storageMode"].(string) {
+		case "blob":
+			hash := currentVer["blobHash"].(*string)
+			if hash == nil {
+				return nil, fmt.Errorf("blob checkpoint 但 hash 为空")
+			}
+			content, err := h.BlobStore.Read(*hash)
+			if err != nil {
+				return nil, fmt.Errorf("读取 blob checkpoint 失败: %w", err)
+			}
+
+			for i := len(steps) - 1; i >= 0; i-- {
+				content = applyPatch(dmp, content, steps[i].diffs)
+			}
+			return content, nil
+
+		case "delta":
+			offset := currentVer["deltaOffset"].(*int64)
+			if offset == nil {
+				return nil, fmt.Errorf("delta 模式但 offset 为空")
+			}
+			fileID := currentVer["fileID"].(int64)
+
+			_, diffs, _, err := h.DeltaStore.ReadEntry(fileID, *offset)
+			if err != nil {
+				return nil, fmt.Errorf("读取 delta entry 失败: %w", err)
+			}
+			steps = append(steps, deltaStep{diffs: diffs})
+
+			baseID := currentVer["baseID"]
+			if baseID == nil {
+				return nil, fmt.Errorf("delta 模式但 base_id 为空")
+			}
+			bid := *baseID.(*int64)
+			baseVer, err := h.DB.GetVersion(ctx, bid)
+			if err != nil {
+				return nil, fmt.Errorf("查询 base version %d 失败: %w", bid, err)
+			}
+			currentVer = baseVer
+
+		default:
+			return nil, fmt.Errorf("不支持的存储模式: %s", currentVer["storageMode"].(string))
+		}
+	}
+}
+
+// applyPatch 对内容应用 go-diff 的 []Diff（PatchApply）。
+func applyPatch(dmp *diffmatchpatch.DiffMatchPatch, text []byte, diffs []diffmatchpatch.Diff) []byte {
+	patches := dmp.PatchMake(string(text), diffs)
+	result, _ := dmp.PatchApply(patches, string(text))
+	return []byte(result)
+}
+
+// HandleListFiles 处理 GET /api/files，列出所有追踪的文件。
+func (h *Handler) HandleListFiles(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	q := r.URL.Query()
+
+	// 解析查询参数
+	projectFilter := q.Get("project")
+	limit := 100
+	offset := 0
+
+	if l := q.Get("limit"); l != "" {
+		if n, err := strconv.Atoi(l); err == nil && n > 0 && n <= 1000 {
+			limit = n
+		}
+	}
+	if o := q.Get("offset"); o != "" {
+		if n, err := strconv.Atoi(o); err == nil && n >= 0 {
+			offset = n
+		}
+	}
+
+	// 构建查询
+	query := `
+		SELECT p.name as project_name, f.path, f.latest_version_id, f.created_at
+		FROM files f
+		JOIN projects p ON f.project_id = p.id
+		WHERE p.is_deleted = 0
+	`
+	args := []any{}
+
+	if projectFilter != "" {
+		query += " AND p.name = ?"
+		args = append(args, projectFilter)
+	}
+
+	query += " ORDER BY p.name, f.path LIMIT ? OFFSET ?"
+	args = append(args, limit, offset)
+
+	rows, err := h.DB.Query(ctx, query, args...)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", fmt.Sprintf("查询文件列表失败: %v", err))
+		return
+	}
+	defer rows.Close()
+
+	type fileEntry struct {
+		Project         string `json:"project"`
+		Path            string `json:"path"`
+		LatestVersionID *int64 `json:"latestVersionId"`
+		CreatedAt       string `json:"createdAt"`
+	}
+
+	var files []fileEntry
+	for rows.Next() {
+		var projectName, filePath, createdAt string
+		var latestVersionID *int64
+		if err := rows.Scan(&projectName, &filePath, &latestVersionID, &createdAt); err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", fmt.Sprintf("扫描文件行失败: %v", err))
+			return
+		}
+		files = append(files, fileEntry{
+			Project:         projectName,
+			Path:            filePath,
+			LatestVersionID: latestVersionID,
+			CreatedAt:       createdAt,
+		})
+	}
+
+	if files == nil {
+		files = []fileEntry{}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"files": files})
+}
+
+// HandleStats 处理 GET /api/stats。
+func (h *Handler) HandleStats(w http.ResponseWriter, r *http.Request) {
+	h.Logger.Debug("stats request")
+	stats, err := h.DB.GetStats(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", fmt.Sprintf("查询统计失败: %v", err))
+		return
+	}
+	writeJSON(w, http.StatusOK, stats)
+}
+
+func (h *Handler) updateLatestSnapshotCache(results []SnapshotResult) {
+	type projAccum struct {
+		files       []snapFile
+		unchanged   int
+	}
+	accums := make(map[string]*projAccum)
+
+	for _, fr := range results {
+		if fr.Status == "captured" && fr.VersionID != nil {
+			proj, err := h.DB.FindProjectByPath(context.Background(), fr.Path)
+			if err != nil {
+				continue
+			}
+			rootPath := proj["rootPath"].(string)
+			a, ok := accums[rootPath]
+			if !ok {
+				a = &projAccum{}
+				accums[rootPath] = a
+			}
+			a.files = append(a.files, snapFile{
+				Path:      fr.Path,
+				VersionID: *fr.VersionID,
+			})
+		} else if fr.Status == "unchanged" {
+			proj, err := h.DB.FindProjectByPath(context.Background(), fr.Path)
+			if err != nil {
+				continue
+			}
+			rootPath := proj["rootPath"].(string)
+			a, ok := accums[rootPath]
+			if !ok {
+				a = &projAccum{}
+				accums[rootPath] = a
+			}
+			a.unchanged++
+		}
+	}
+
+	for root, a := range accums {
+		h.latestSnapshots.Store(root, &snapshotStatus{
+			UpdatedAt: time.Now().UTC().Format(time.RFC3339),
+			Captured:  len(a.files),
+			Unchanged: a.unchanged,
+			Files:     a.files,
+		})
+	}
+}
+
+func (h *Handler) HandleLatestSnapshot(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "仅支持 GET")
+		return
+	}
+
+	projectRoot := r.URL.Query().Get("projectRoot")
+	if projectRoot == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "projectRoot 不能为空")
+		return
+	}
+
+	val, ok := h.latestSnapshots.Load(projectRoot)
+	if !ok {
+		writeJSON(w, http.StatusOK, nil)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, val)
+}

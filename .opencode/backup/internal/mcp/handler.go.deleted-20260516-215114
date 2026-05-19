@@ -1,0 +1,80 @@
+package mcp
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+
+	mcp "github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
+
+	"github.com/changez/changez/internal/config"
+	"github.com/changez/changez/internal/db"
+	"github.com/changez/changez/internal/handler"
+	"github.com/changez/changez/internal/storage"
+)
+
+type MCPServer struct {
+	mcpServer *server.MCPServer
+	httpHandler http.Handler
+}
+
+func NewMCPServer(
+	database *db.DB,
+	blobStore *storage.BlobStore,
+	deltaStore *storage.DeltaStore,
+	cfg *config.Config,
+	sourceIDs map[string]int64,
+) *MCPServer {
+	s := server.NewMCPServer(
+		"changez",
+		"1.0.0",
+		server.WithResourceCapabilities(true, true),
+		server.WithLogging(),
+	)
+
+	h := handler.NewHandler(database, blobStore, deltaStore, cfg, sourceIDs)
+
+	s.AddTool(NewSnapshotTool(h), handleSnapshotTool(h))
+	s.AddTool(NewLogTool(h), handleLogTool(h))
+	s.AddTool(NewRestoreTool(h), handleRestoreTool(h))
+	s.AddTool(NewDiffTool(h), handleDiffTool(h))
+
+	mcpHTTP := server.NewMCPServer(
+		"changez",
+		"1.0.0",
+	)
+
+	httpHandler := mcpHTTP.ServeHTTP
+
+	return &MCPServer{
+		mcpServer:   s,
+		httpHandler: httpHandler,
+	}
+}
+
+func (m *MCPServer) HandleMCP(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to read body: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	var req mcp.JSONRPCRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		http.Error(w, fmt.Sprintf("invalid JSON-RPC: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	response := m.mcpServer.HandleRequest(r.Context(), &req)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+func (m *MCPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if m.httpHandler != nil {
+		m.httpHandler.ServeHTTP(w, r)
+	}
+}

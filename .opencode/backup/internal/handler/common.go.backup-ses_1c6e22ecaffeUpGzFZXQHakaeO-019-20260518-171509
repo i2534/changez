@@ -1,0 +1,68 @@
+package handler
+
+import (
+	"encoding/json"
+	"log"
+	"net/http"
+	"sync"
+
+	"github.com/changez/changez/internal/compact"
+	"github.com/changez/changez/internal/config"
+	"github.com/changez/changez/internal/db"
+	"github.com/changez/changez/internal/storage"
+)
+
+type Handler struct {
+	DB         *db.DB
+	BlobStore  *storage.BlobStore
+	DeltaStore *storage.DeltaStore
+	Config     *config.Config
+	SourceIDs  map[string]int64
+	Compact    *compact.Compactor
+	fileMuMap  *sync.Map
+}
+
+func (h *Handler) getFileLock(fileID int64) *sync.RWMutex {
+	mu, _ := h.fileMuMap.LoadOrStore(fileID, &sync.RWMutex{})
+	return mu.(*sync.RWMutex)
+}
+
+func NewHandler(database *db.DB, bs *storage.BlobStore, ds *storage.DeltaStore, cfg *config.Config, sourceIDs map[string]int64, fileMuMap *sync.Map) *Handler {
+	return &Handler{
+		DB:         database,
+		BlobStore:  bs,
+		DeltaStore: ds,
+		Config:     cfg,
+		SourceIDs:  sourceIDs,
+		fileMuMap:  fileMuMap,
+	}
+}
+
+// tryCompact 在写入操作后检查并触发 compact（handler 已持锁）。
+func (h *Handler) tryCompact(fileID int64) {
+	if h.Compact == nil {
+		return
+	}
+	compacted, err := h.Compact.CheckAndCompactLocked(fileID)
+	if err != nil {
+		log.Printf("compact check file %d: %v", fileID, err)
+	} else if compacted {
+		log.Printf("compact file %d: completed after snapshot", fileID)
+	}
+}
+
+func writeJSON(w http.ResponseWriter, status int, data any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(data)
+}
+
+func writeError(w http.ResponseWriter, status int, code, message string) {
+	resp := map[string]any{
+		"error": map[string]string{
+			"code":    code,
+			"message": message,
+		},
+	}
+	writeJSON(w, status, resp)
+}
