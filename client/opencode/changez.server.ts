@@ -395,53 +395,60 @@ const createServerPlugin = async (
 
         if (files.length === 0) return;
 
-        const res = await httpRequest(cfg, "POST", "/api/snapshot", {
-          source: cfg.source,
-          sessionId: sessionID,
-          model,
-          files,
-        });
+        // Fire-and-forget: don't block the tool execution
+        void (async () => {
+          try {
+            const res = await httpRequest(cfg, "POST", "/api/snapshot", {
+              source: cfg.source,
+              sessionId: sessionID,
+              model: model ?? "",
+              files,
+            });
 
-        log("info", `snapshot sent: ${files.length} file(s)`, {
-          tool,
-          sessionID,
-          httpStatus: res.status,
-        });
+            log("info", `snapshot sent: ${files.length} file(s)`, {
+              tool,
+              sessionID,
+              httpStatus: res.status,
+            });
 
-        if (res.status >= 400) {
-          const body = res.json as { error?: { code?: string; message?: string } } | undefined;
-          const errorMsg = body?.error?.message ?? JSON.stringify(body);
-          if (res.status >= 500) {
-            log("warn", `snapshot server error: ${res.status} — ${errorMsg}`);
-          } else {
-            log("error", `snapshot client error: ${res.status} — ${errorMsg}`);
+            if (res.status >= 400) {
+              const body = res.json as { error?: { code?: string; message?: string } } | undefined;
+              const errorMsg = body?.error?.message ?? JSON.stringify(body);
+              if (res.status >= 500) {
+                log("warn", `snapshot server error: ${res.status} — ${errorMsg}`);
+              } else {
+                log("error", `snapshot client error: ${res.status} — ${errorMsg}`);
+              }
+              return;
+            }
+
+            const body = res.json as SnapshotResponse | undefined;
+            if (!body || !body.results) return;
+
+            const { results, summary } = body;
+
+            for (const item of results) {
+              switch (item.status) {
+                case "error":
+                  log("warn", `snapshot error: ${item.path} — ${item.reason ?? "unknown"}`);
+                  break;
+                case "unchanged":
+                  log("debug", `unchanged: ${item.path}`);
+                  break;
+                case "captured":
+                  log("debug", `captured v${item.versionId}: ${item.path}`);
+                  break;
+              }
+            }
+
+            log(
+              "info",
+              `snapshot summary: ${summary.captured} captured, ${summary.unchanged} unchanged, ${summary.errors} errors`,
+            );
+          } catch (e) {
+            log("warn", `snapshot request failed: ${String(e)}`);
           }
-          return;
-        }
-
-        const body = res.json as SnapshotResponse | undefined;
-        if (!body || !body.results) return;
-
-        const { results, summary } = body;
-
-        for (const item of results) {
-          switch (item.status) {
-            case "error":
-              log("warn", `snapshot error: ${item.path} — ${item.reason ?? "unknown"}`);
-              break;
-            case "unchanged":
-              log("debug", `unchanged: ${item.path}`);
-              break;
-            case "captured":
-              log("debug", `captured v${item.versionId}: ${item.path}`);
-              break;
-          }
-        }
-
-        log(
-          "info",
-          `snapshot summary: ${summary.captured} captured, ${summary.unchanged} unchanged, ${summary.errors} errors`,
-        );
+        })();
       } catch (e) {
         log("error", `tool.execute.after unhandled error: ${String(e)}`, {
           tool: input.tool,
