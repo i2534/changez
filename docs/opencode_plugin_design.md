@@ -616,17 +616,23 @@ export default {
 
 ---
 
-## 待验证
+## 已验证事项
 
 ### 插件配置传递方式
 
-当前 opencode.json 中的 `plugin` 数组只列了 npm 包名（如 `"oh-my-openagent"`），而本地 `.ts` 文件放在 `~/.config/opencode/plugins/` 目录下由 opencode 自动发现加载。backup 插件就是这种模式，但它不需要配置参数。
+✅ opencode 支持 `file://` 协议的元组形式配置，能正确传递 options 给本地插件文件。
 
-我们的 changez 插件需要 `url`、`token` 等配置，设计上通过 `opencode.json` 的 `["changez", { ... }]` 元组形式传入。
-
-**待验证：** opencode 是否支持将本地 `.ts` 文件写入 `plugin` 数组并传递 options？
-
-**备选方案：** 如果不支持，改为从独立配置文件读取（如 `~/.config/opencode/changez.json`），插件启动时自行加载。
+```jsonc
+// opencode.json
+{
+  "plugin": [
+    ["file://./client/opencode/changez.server.ts", {
+      "url": "http://127.0.0.1:8760",
+      "token": "xxx"
+    }]
+  ]
+}
+```
 
 ---
 
@@ -740,38 +746,54 @@ if (server !== undefined && tui !== undefined) {
 | 功能 | API | 触发时机 |
 |------|-----|----------|
 | Toast 通知（加载结果） | `api.ui.toast()` | 插件初始化时 |
-| Sidebar 状态显示 | `api.ui.Slot({ name: "sidebar_content" })` | 常驻显示 |
-| 服务连通性检查 | 独立 HTTP GET `/api/health` | 初始化 + 定期轮询 |
-| 错误通知 | `api.attention.notify()` | 连续上报失败时 |
+| Sidebar 状态显示 | `api.slots.register()` | 常驻显示 |
+| 服务连通性检查 | 独立 HTTP GET `/api/health` | 初始化（5s 超时） |
+| Snapshot 轮询 | GET `/api/snapshots/latest` | 8s 间隔 |
+| 文件列表轮询 | GET `/api/files?project={name}&limit=1000` | 8s 间隔（与 snapshot 并行） |
+| 错误通知 | `api.ui.toast()` + sidebar 状态 | 连续上报失败时 |
 
 #### 状态显示内容
 
-Sidebar slot 中显示简洁状态：
+Sidebar slot 中显示可展开的 changez 状态面板：
 
+**收起状态（已连接）：**
 ```
-📦 changez
-✅ N captured Xs ago · file1, file2, file3, +M
+▶ changez    ● Connected
+```
+
+**展开状态（有 snapshot）：**
+```
+▼ changez    ● Connected
+  Last captured 5s ago
+  • main.go     @v42
+  • util.go     @v43
+```
+
+**展开状态（无 snapshot，有文件）：**
+```
+▼ changez    ● Connected
+  No snapshots yet
+  • main.go     @v42
+  • util.go     @v43
 ```
 
 失败时：
-
 ```
-📦 changez
-⚠️ Service unreachable
+▶ changez    ● Service unreachable
 ```
 
-无数据时：
-
+无数据时（无文件、无 snapshot）：
 ```
-📦 changez
- Waiting for snapshots...
+▶ changez    ○ Waiting...
 ```
 
-文件名最多显示 3 个，超出部分显示 `, +M`。
+展开后列出所有追踪文件及其最新版本号。
 
 #### 实现思路
 
-已选定 TUI 直连 Go 后端方案（见下方"实时通知方案"）。TUI 插件通过轮询 `GET /api/snapshots/latest` 获取最新 snapshot 状态，完全独立于 Server 插件。
+已选定 TUI 直连 Go 后端方案（见下方"实时通知方案"）。TUI 插件通过轮询两个端点获取状态，完全独立于 Server 插件：
+- `GET /api/snapshots/latest` → 最新 snapshot 状态
+- `GET /api/files?limit=1000` → 所有追踪文件列表
 
 ```typescript
 // changez.tui.tsx (伪代码)
@@ -1114,14 +1136,18 @@ const tui = async (api: TuiPluginApi, options: PluginOptions): Promise<void> => 
 
   // 2. 轮询 snapshot 状态
   const projectRoot = path.resolve(process.cwd());
+  const projectName = path.basename(projectRoot);  // 用于过滤文件列表
   let consecutiveFailures = 0;
   let pollInterval: ReturnType<typeof setInterval> | null = null;
 
   const poll = async () => {
-    const url = `${cfg.url}/api/snapshots/latest?projectRoot=${encodeURIComponent(projectRoot)}`;
     try {
-      const res = await httpGet(url, cfg.token);
-      if (res.status !== 200 || !res.body) {
+      const [snapshotRes, filesRes] = await Promise.all([
+        httpGet(snapshotUrl, cfg.token),
+        httpGet(filesUrl, cfg.token),
+      ]);
+
+      if (snapshotRes.status !== 200 || !snapshotRes.body) {
         consecutiveFailures++
         if (consecutiveFailures >= 3) {
           setError("Service unreachable")
@@ -1130,8 +1156,13 @@ const tui = async (api: TuiPluginApi, options: PluginOptions): Promise<void> => 
         return
       }
       consecutiveFailures = 0
-      const parsed = JSON.parse(res.body)
-      setData(parsed)  // 更新 sidebar 信号（不弹 toast）
+      setData(JSON.parse(snapshotRes.body))
+
+      if (filesRes.status === 200 && filesRes.body) {
+        const parsed = JSON.parse(filesRes.body);
+        setAllFiles(parsed.files ?? []);
+      }
+
       setError(null)
     } catch {
       consecutiveFailures++
@@ -1199,9 +1230,16 @@ Server Plugin                    Go Backend                     TUI Plugin
 #### 轮询策略（P1 Sidebar 常驻状态）
 
 - **频率**：8 秒一次。不是实时监控面板，这个间隔足以让用户感知变化
+- **端点**：并行轮询 `/api/snapshots/latest` 和 `/api/files?limit=1000`
 - **触发条件**：持续轮询，不区分 session 状态
-- **失败处理**：连续 3 次请求失败后停止轮询，sidebar 显示错误状态
+- **失败处理**：连续 3 次失败后降级为 60 秒低频探测；探测成功则恢复 8 秒轮询；探测连续 10 次失败（约 10 分钟）后真正停止，sidebar 显示 "Service offline"
 - **初始轮询**：health check 成功后立即执行一次，避免等待 8s 才显示首次数据
+- **Health check 失败**：不阻塞插件加载，直接进入 60 秒低频探测模式，服务恢复后自动切回 8 秒轮询
+
+#### Server 插件重连策略
+
+- **Project 注册**：加载时立即注册，失败则每 30 秒无限重试，成功或已存在（409）后停止
+- **Snapshot 上报**：每次 `tool.execute.after` 都是独立 HTTP 请求，changez 恢复后自动可用（无需重连逻辑）
 
 #### 配置
 

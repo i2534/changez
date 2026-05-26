@@ -1,0 +1,35 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color: #e5e7eb;
+  background-color: #111827;
+}
+
+body {
+  font-family: "Inter", system-ui, sans-serif;
+}
+
+.d2hl {
+  background-color: #1f2937 !important;
+  border: none !important;
+}
+
+.d2h-wrapper {
+  border: none !important;
+}
+
+.d2h-file-header {
+  background-color: #374151 !important;
+  color: #e5e7eb !important;
+}
+
+.d2h-line-sum {
+  background-color: #374151 !important;
+  border-color: #4b5563 !important;
+}
+
+.d2h-diff-type-wrapper {
+  border-color: #4b5563 !important;
+}

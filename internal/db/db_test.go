@@ -131,6 +131,8 @@ func TestListProjects_ReturnsCreatedProjects(t *testing.T) {
 	// 验证按名称排序
 	assert.Equal(t, "project-alpha", projects[0]["name"])
 	assert.Equal(t, "project-beta", projects[1]["name"])
+	assert.Equal(t, int64(0), projects[0]["fileCount"])
+	assert.Equal(t, int64(0), projects[1]["fileCount"])
 }
 
 func TestCreateProject_DuplicateRootPath_ReturnsError(t *testing.T) {
@@ -197,6 +199,7 @@ func TestListProjects_ExcludesSoftDeleted(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, projects, 1)
 	assert.Equal(t, id1, projects[0]["id"])
+	assert.Equal(t, int64(0), projects[0]["fileCount"])
 }
 
 // ========================================

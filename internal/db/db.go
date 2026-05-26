@@ -142,6 +142,12 @@ func (d *DB) createTables() error {
 		return fmt.Errorf("create idx_versions_source: %w", err)
 	}
 
+	if _, err := d.db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_versions_changed_at ON versions(changed_at DESC)
+	`); err != nil {
+		return fmt.Errorf("create idx_versions_changed_at: %w", err)
+	}
+
 	return nil
 }
 
@@ -598,7 +604,9 @@ func (d *DB) GetSourceIDByName(ctx context.Context, name string) (int64, error) 
 // ListProjects 查询所有未删除的项目。
 func (d *DB) ListProjects(ctx context.Context) ([]map[string]any, error) {
 	rows, err := d.db.QueryContext(ctx,
-		"SELECT id, name, root_path, extra, created_at FROM projects WHERE is_deleted = 0 ORDER BY name",
+		`SELECT p.id, p.name, p.root_path, p.extra, p.created_at,` +
+			` (SELECT COUNT(*) FROM files WHERE project_id = p.id) AS file_count` +
+			` FROM projects p WHERE p.is_deleted = 0 ORDER BY p.name`,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list projects: %w", err)
@@ -609,7 +617,8 @@ func (d *DB) ListProjects(ctx context.Context) ([]map[string]any, error) {
 	for rows.Next() {
 		var id int64
 		var name, rootPath, extra, createdAt string
-		if err := rows.Scan(&id, &name, &rootPath, &extra, &createdAt); err != nil {
+		var fileCount int64
+		if err := rows.Scan(&id, &name, &rootPath, &extra, &createdAt, &fileCount); err != nil {
 			return nil, fmt.Errorf("scan project: %w", err)
 		}
 		projects = append(projects, map[string]any{
@@ -618,6 +627,7 @@ func (d *DB) ListProjects(ctx context.Context) ([]map[string]any, error) {
 			"rootPath":  rootPath,
 			"extra":     extra,
 			"createdAt": createdAt,
+			"fileCount": fileCount,
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -666,6 +676,32 @@ func (d *DB) Query(ctx context.Context, query string, args ...any) (*sql.Rows, e
 // 事务方案保证 delta_offset=0 永远不会正常提交，
 // 所以启动时直接删除 storage_mode='delta' 且 delta_offset 异常的记录。
 func (d *DB) RecoverOrphans(ctx context.Context) error {
+	// 先解除 versions.base_id 对这些 orphan 的引用
+	if _, err := d.db.ExecContext(ctx, `
+		UPDATE versions
+		SET base_id = NULL
+		WHERE base_id IN (
+			SELECT id FROM versions
+			WHERE storage_mode = 'delta'
+			AND (delta_offset IS NULL OR delta_offset = 0)
+		)
+	`); err != nil {
+		return fmt.Errorf("unlink orphan base_ids: %w", err)
+	}
+
+	// 再解除 files.latest_version_id 对这些 orphan 的引用
+	if _, err := d.db.ExecContext(ctx, `
+		UPDATE files
+		SET latest_version_id = NULL
+		WHERE latest_version_id IN (
+			SELECT id FROM versions
+			WHERE storage_mode = 'delta'
+			AND (delta_offset IS NULL OR delta_offset = 0)
+		)
+	`); err != nil {
+		return fmt.Errorf("unlink orphan latest_version_ids: %w", err)
+	}
+
 	res, err := d.db.ExecContext(ctx, `
 		DELETE FROM versions
 		WHERE storage_mode = 'delta'

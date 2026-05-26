@@ -47,7 +47,7 @@ log:
   level: "debug"
   file: "/var/log/changez.log"
 `
-	err := os.WriteFile(configPath, []byte(yamlContent), 0644)
+	err := os.WriteFile(configPath, []byte(yamlContent), 0o644)
 	assert.NoError(t, err)
 
 	cfg, err := Load(configPath)
@@ -71,7 +71,7 @@ func TestLoad_MergeDefaults(t *testing.T) {
 	// 只设置 listen，其他字段应保持默认值
 	yamlContent := `listen: "0.0.0.0:3000"
 `
-	err := os.WriteFile(configPath, []byte(yamlContent), 0644)
+	err := os.WriteFile(configPath, []byte(yamlContent), 0o644)
 	assert.NoError(t, err)
 
 	cfg, err := Load(configPath)
@@ -98,7 +98,7 @@ func TestLoad_InvalidYAML(t *testing.T) {
   invalid indentation
 token: "test"
 `
-	err := os.WriteFile(configPath, []byte(invalidYAML), 0644)
+	err := os.WriteFile(configPath, []byte(invalidYAML), 0o644)
 	assert.NoError(t, err)
 
 	cfg, err := Load(configPath)

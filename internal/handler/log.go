@@ -16,7 +16,7 @@ func (h *Handler) HandleLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	path := extractPathFromURL(r.URL.Path, "/api/files/", "/versions")
+	path := r.URL.Query().Get("path")
 	if path == "" {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "path 参数缺失")
 		return
@@ -164,29 +164,15 @@ func (h *Handler) readDeltaMeta(ctx context.Context, fileID, versionID int64) (*
 		return nil, nil
 	}
 
-	offset := ver["deltaOffset"]
-	if offset == nil {
+	offset, ok := asInt64Ptr(ver["deltaOffset"])
+	if !ok {
 		return nil, nil
 	}
 
-	_, _, meta, err := h.DeltaStore.ReadEntry(fileID, *offset.(*int64))
+	_, _, meta, err := h.DeltaStore.ReadEntry(fileID, offset)
 	if err != nil {
 		return nil, err
 	}
 
 	return meta, nil
-}
-
-func extractPathFromURL(urlPath, prefix, suffix string) string {
-	if !strings.HasPrefix(urlPath, prefix) {
-		return ""
-	}
-	path := strings.TrimPrefix(urlPath, prefix)
-	if suffix != "" && strings.HasSuffix(path, suffix) {
-		path = strings.TrimSuffix(path, suffix)
-	}
-	if len(path) > 0 && path[0] != '/' {
-		path = "/" + path
-	}
-	return path
 }

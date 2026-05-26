@@ -1,0 +1,86 @@
+{
+  "common": {
+    "loading": "加载中...",
+    "error": "错误",
+    "retry": "重试",
+    "cancel": "取消",
+    "clear": "清除",
+    "no_results": "未找到结果。"
+  },
+  "dashboard": {
+    "projects": "项目",
+    "files": "文件",
+    "versions": "版本",
+    "change_sources": "变更来源",
+    "recent_activity": "最近活动",
+    "no_recent_activity": "暂无最近活动。",
+    "failed_to_load": "加载数据失败"
+  },
+  "projects": {
+    "search_placeholder": "搜索项目...",
+    "no_projects": "未找到项目。",
+    "created": "创建时间：",
+    "files_count": "{{count}} 个文件",
+    "failed_to_load": "加载项目失败"
+  },
+  "files": {
+    "search_placeholder": "搜索文件...",
+    "no_files": "未找到文件。",
+    "project_label": "项目：",
+    "files_count": "{{count}} 个文件",
+    "failed_to_load": "加载文件失败"
+  },
+  "timeline": {
+    "all_sources": "全部来源",
+    "all_actions": "全部操作",
+    "no_versions_match": "没有匹配的版本。",
+    "show_details": "▶ 显示详情",
+    "hide_details": "▼ 隐藏详情",
+    "session": "会话：",
+    "model": "模型：",
+    "message": "消息：",
+    "view_diff": "查看差异",
+    "versions_count": "{{count}} 个版本",
+    "project_label": "项目：",
+    "no_history": "无版本历史。",
+    "content_at_v": "v{{version}} 的内容",
+    "view_content": "查看内容 (v{{version}})",
+    "copy_clipboard": "复制 v{{version}}",
+    "copied": "已复制到剪贴板",
+    "failed_to_load": "加载版本失败",
+    "failed_to_load_content": "加载内容失败",
+    "corrupted_restore": "无法恢复 v{{version}}：该版本数据已损坏（delta 链不完整）"
+  },
+  "diff": {
+    "back": "← 返回",
+    "content_at_v": "v{{version}} 的内容",
+    "view_content": "查看 v{{version}} 内容",
+    "failed_to_load": "加载差异失败",
+    "failed_to_load_content": "加载内容失败",
+    "corrupted_view": "无法查看 v{{version}}：该版本数据已损坏（delta 链不完整）"
+  },
+  "login": {
+    "title": "需要身份验证",
+    "description": "输入 API Token 以访问 Changez。",
+    "placeholder": "输入 Token...",
+    "connect": "连接",
+    "verifying": "验证中...",
+    "cancel": "取消",
+    "invalid_token": "Token 无效，请重试。",
+    "cannot_connect": "无法连接到服务器。"
+  },
+  "layout": {
+    "app_name": "Changez",
+    "change_token": "更换 Token",
+    "dashboard": "首页",
+    "projects": "项目",
+    "files": "文件",
+    "diff": "差异"
+  },
+  "time": {
+    "sec_ago": "{{count}} 秒前",
+    "min_ago": "{{count}} 分钟前",
+    "hr_ago": "{{count}} 小时前",
+    "day_ago": "{{count}} 天前"
+  }
+}

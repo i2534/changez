@@ -10,7 +10,14 @@ import (
 	"github.com/changez/changez/internal/compact"
 	"github.com/changez/changez/internal/config"
 	"github.com/changez/changez/internal/db"
+	"github.com/changez/changez/internal/dbutil"
 	"github.com/changez/changez/internal/storage"
+)
+
+// 复用 dbutil 中的工具函数，避免在多个包中重复定义。
+var (
+	asInt64Ptr  = dbutil.AsInt64Ptr
+	asStringPtr = dbutil.AsStringPtr
 )
 
 type Handler struct {
@@ -92,7 +99,7 @@ func NewLogger(cfg *config.Config) *LoggerWrapper {
 
 	if cfg.Log.File != "" {
 		var err error
-		f, err = os.OpenFile(cfg.Log.File, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		f, err = os.OpenFile(cfg.Log.File, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 		if err != nil {
 			slog.Default().Warn("open log file failed, using stderr", "file", cfg.Log.File, "error", err)
 			h = slog.NewTextHandler(os.Stderr, &opts)

@@ -749,3 +749,35 @@ TUI 端（`changez.tui.ts`）：
 3. Hook 超时后 AI 是否等待还是跳过
 4. --bare 模式对 hooks 的影响范围
 5. wps_claude 逆向版本 hooks 功能是否完整
+
+---
+
+## Round 50 — Hook 中断重连与架构决策（2026-05-20）
+
+**用户：** 检查 claude code 相关代码和文档，测试插件，讨论中断重连机制。
+
+**完成事项：**
+1. 自动化测试脚本 `test-hook.sh`（10/10 通过）
+2. 进程内重试机制（指数退避 500ms/1000ms）
+3. 实机验证 wps_claude → hook → changez 完整链路
+4. HTTP daemon 方案设计与实现（`changez-daemon.js`）
+
+**DSV4 Review 发现：**
+1. daemon 解决不存在的问题（100-200ms 延迟占 hook timeout 1-2%）
+2. 并发竞态条件（多个 hook 同时启动 daemon）
+3. daemon 进程泄漏（配置变更不生效）
+4. 端口号硬编码不一致
+5. forwardToDaemon 无重试
+6. Authorization header undefined 隐患
+7. 直接模式错误处理弱于旧版本
+
+**决策：**
+- 去掉 daemon 自启动，回到纯 command hook 方案
+- 保留 `changez-daemon.js` 备用（已修复 bug）
+- `changez-hook.js` 精简至 ~180 行
+- 保留完整重试逻辑（指数退避 + 4xx/5xx 区分）
+
+**输出文档：**
+- `docs/claude_hook_retry_design.md`（Phase 1 完成）
+- `docs/claude_hook_http_design.md`（已搁置）
+- `docs/claude_code_plugin_design.md`（更新实现状态）

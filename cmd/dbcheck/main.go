@@ -10,7 +10,7 @@ import (
 )
 
 func main() {
-	d, err := db.Open("/home/lan/workspace/go/changez/data/changez.db")
+	d, err := db.Open("/home/lan/workspace/go/changez/data")
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -1,0 +1,86 @@
+{
+  "common": {
+    "loading": "Loading...",
+    "error": "Error",
+    "retry": "Retry",
+    "cancel": "Cancel",
+    "clear": "Clear",
+    "no_results": "No results found."
+  },
+  "dashboard": {
+    "projects": "Projects",
+    "files": "Files",
+    "versions": "Versions",
+    "change_sources": "Change Sources",
+    "recent_activity": "Recent Activity",
+    "no_recent_activity": "No recent activity.",
+    "failed_to_load": "Failed to load data"
+  },
+  "projects": {
+    "search_placeholder": "Search projects...",
+    "no_projects": "No projects found.",
+    "created": "Created:",
+    "files_count": "{{count}} files",
+    "failed_to_load": "Failed to load projects"
+  },
+  "files": {
+    "search_placeholder": "Search files...",
+    "no_files": "No files found.",
+    "project_label": "Project:",
+    "files_count": "{{count}} files",
+    "failed_to_load": "Failed to load files"
+  },
+  "timeline": {
+    "all_sources": "All Sources",
+    "all_actions": "All Actions",
+    "no_versions_match": "No versions match filters.",
+    "show_details": "▶ Show details",
+    "hide_details": "▼ Hide details",
+    "session": "Session:",
+    "model": "Model:",
+    "message": "Message:",
+    "view_diff": "View Diff",
+    "versions_count": "{{count}} versions",
+    "project_label": "Project:",
+    "no_history": "No version history.",
+    "content_at_v": "Content at v{{version}}",
+    "view_content": "View Content (v{{version}})",
+    "copy_clipboard": "Copy v{{version}} to Clipboard",
+    "copied": "Content copied to clipboard",
+    "failed_to_load": "Failed to load versions",
+    "failed_to_load_content": "Failed to load content",
+    "corrupted_restore": "无法恢复 v{{version}}：该版本数据已损坏（delta 链不完整）"
+  },
+  "diff": {
+    "back": "← Back",
+    "content_at_v": "Content at v{{version}}",
+    "view_content": "View v{{version}} Content",
+    "failed_to_load": "Failed to load diff",
+    "failed_to_load_content": "Failed to load content",
+    "corrupted_view": "无法查看 v{{version}}：该版本数据已损坏（delta 链不完整）"
+  },
+  "login": {
+    "title": "Authentication Required",
+    "description": "Enter your API token to access Changez.",
+    "placeholder": "Enter token...",
+    "connect": "Connect",
+    "verifying": "Verifying...",
+    "cancel": "Cancel",
+    "invalid_token": "Invalid token. Please try again.",
+    "cannot_connect": "Cannot connect to server."
+  },
+  "layout": {
+    "app_name": "Changez",
+    "change_token": "Change Token",
+    "dashboard": "Dashboard",
+    "projects": "Projects",
+    "files": "Files",
+    "diff": "Diff"
+  },
+  "time": {
+    "sec_ago": "{{count}} sec ago",
+    "min_ago": "{{count}} min ago",
+    "hr_ago": "{{count}} hr ago",
+    "day_ago": "{{count}} day ago"
+  }
+}

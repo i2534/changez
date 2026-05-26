@@ -1,0 +1,74 @@
+# Changez 服务配置文件
+#
+# 使用方式：
+#   changez -c config.yaml          # 指定配置文件
+#   changez                          # 默认使用当前目录 config.yaml
+#
+# 所有字段均为可选，省略时使用默认值。
+# 路径为相对路径时，相对于配置文件所在目录解析。
+
+# ── 网络配置 ──────────────────────────────────────────────
+
+# HTTP 服务监听地址
+# 格式：host:port
+# 默认：127.0.0.1:8760（仅本机访问）
+# 示例：0.0.0.0:8760（允许外部访问）
+listen: "127.0.0.1:8760"
+
+# Bearer token 认证
+# 所有 API 请求需携带 Authorization: Bearer <token>
+# 留空则不启用认证（仅建议开发环境）
+token: "HelloChangez"
+
+# ── 存储配置 ──────────────────────────────────────────────
+
+storage:
+  # 单文件最大字节数
+  # 超过此大小的文件将被拒绝
+  # 默认：10485760（10MB）
+  max_file_size: 10485760
+
+# ── Compact 压缩整理配置 ──────────────────────────────────
+# 当 delta 链过长时，将最新版本转换为 blob checkpoint，缩短读取链
+
+compact:
+  # 是否启用 compact
+  # 关闭后 delta 链会无限增长，读取性能逐渐下降
+  # 默认：true
+  enabled: true
+
+  # 定时器间隔
+  # 每隔多久检查所有文件，处理写入时没赶上的链过长
+  # 支持格式：1h, 24h, 72h 等
+  # 默认：24h
+  interval: "24h"
+
+  # 最大 delta 链长度
+  # 连续 delta 版本数超过此值时触发 compact
+  # 写入时即时检查，定时器兜底
+  # 默认：50
+  max_delta_chain: 50
+
+  # Delta 压缩阈值（字节）
+  # []Diff 序列化后的原始字节 ≤ 此值则不压缩
+  # 小 diff 压缩后可能反而更大，此阈值避免这种情况
+  # 默认：512
+  delta_compress_threshold: 512
+
+# ── 日志配置 ──────────────────────────────────────────────
+
+log:
+  # 日志级别
+  # 可选：debug, info, warn, error
+  # debug：详细请求信息、delta 写入详情
+  # info：snapshot 请求、compact 完成
+  # warn：snapshot 失败、文件读取失败
+  # error：数据库错误、存储错误
+  # 默认：info
+  level: "info"
+
+  # 日志文件路径
+  # 留空则输出到 stderr
+  # 相对路径相对于配置文件所在目录
+  # 默认：changez.log
+  file: "changez.log"

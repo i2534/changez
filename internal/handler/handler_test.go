@@ -120,6 +120,8 @@ func TestListProjects(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	projects := resp["projects"].([]interface{})
 	require.Len(t, projects, 1)
+	proj := projects[0].(map[string]interface{})
+	assert.Equal(t, float64(0), proj["fileCount"])
 }
 
 func TestDeleteProject(t *testing.T) {

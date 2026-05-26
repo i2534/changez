@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "hooks": {
+    "afterFileEdit": [
+      {
+        "command": "node hooks/report.js",
+        "timeout": 10
+      }
+    ],
+    "sessionStart": [
+      {
+        "command": "node hooks/session-init.js",
+        "timeout": 10
+      }
+    ]
+  }
+}

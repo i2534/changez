@@ -1,11 +1,16 @@
-BINARY  := changez
+DIST    := dist
+BINARY  := $(DIST)/changez
 CMD     := ./cmd/changez
 PIDFILE := .changez.pid
 CONFIG  := config.yaml
 
-.PHONY: build start stop check restart clean
+.PHONY: build start stop check restart clean build-web
 
-build:
+build-web:
+	cd web && npm install && npm run build
+
+build: build-web
+	@mkdir -p $(DIST)
 	go build -o $(BINARY) $(CMD)
 
 start: build
@@ -35,5 +40,14 @@ check:
 
 restart: stop start
 
+# Quick restart without rebuild (frontend-only change)
+restart-web: build-web
+	kill $(shell cat $(PIDFILE)) 2>/dev/null; rm -f $(PIDFILE); make start
+
+# Development: run without installing (skips binary copy)
+dev:
+	go run $(CMD)
+
 clean: stop
-	rm -f $(BINARY) $(PIDFILE)
+	rm -rf $(DIST)
+	rm -f $(PIDFILE)

@@ -134,7 +134,6 @@ func (s *DeltaStore) Append(fileID, versionID int64, diffs []diffmatchpatch.Diff
 
 	if len(metaBytes) > 0 {
 		metaHeader := make([]byte, 4)
-		metaHeader[0] = DeltaMetaFlagMask
 		binary.BigEndian.PutUint32(metaHeader[0:4], uint32(len(metaBytes)))
 		metaHeader[0] |= DeltaMetaFlagMask
 		buf.Write(metaHeader)

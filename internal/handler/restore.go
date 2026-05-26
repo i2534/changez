@@ -14,9 +14,21 @@ func (h *Handler) HandleRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	path, versionID, err := parseRestorePath(r.URL.Path)
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "path 参数缺失")
+		return
+	}
+
+	versionStr := r.URL.Query().Get("version")
+	if versionStr == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "version 参数缺失")
+		return
+	}
+
+	versionID, err := strconv.ParseInt(versionStr, 10, 64)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "无效的版本号")
 		return
 	}
 
@@ -93,32 +105,4 @@ func (h *Handler) doRestore(ctx context.Context, path string, versionID int64) (
 	}
 
 	return content, ver["changedAt"].(string), nil
-}
-
-func parseRestorePath(urlPath string) (string, int64, error) {
-	const prefix = "/api/files/"
-	if !strings.HasPrefix(urlPath, prefix) {
-		return "", 0, fmt.Errorf("无效的路径格式")
-	}
-
-	rest := urlPath[len(prefix):]
-
-	const restoreSep = "/restore/"
-	idx := strings.LastIndex(rest, restoreSep)
-	if idx < 0 {
-		return "", 0, fmt.Errorf("缺少 /restore/:version 部分")
-	}
-
-	path := rest[:idx]
-	if len(path) > 0 && path[0] != '/' {
-		path = "/" + path
-	}
-	versionStr := rest[idx+len(restoreSep):]
-
-	versionID, err := strconv.ParseInt(versionStr, 10, 64)
-	if err != nil {
-		return "", 0, fmt.Errorf("无效的版本号: %s", versionStr)
-	}
-
-	return path, versionID, nil
 }

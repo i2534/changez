@@ -1,11 +1,10 @@
 # Binaries
-changez
+dist/
 *.test
 
 # Runtime
-.changez.pid
-changez.log
-config.yaml
+*.pid
+*.log
 data/
 
 # OpenCode
@@ -23,3 +22,9 @@ data/
 # OS
 .DS_Store
 Thumbs.db
+
+# Web build
+web/node_modules/
+web/dist/
+!web/dist/.gitkeep
+changez

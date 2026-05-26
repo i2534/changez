@@ -13,7 +13,14 @@ import (
 
 	"github.com/changez/changez/internal/config"
 	"github.com/changez/changez/internal/db"
+	"github.com/changez/changez/internal/dbutil"
 	"github.com/changez/changez/internal/storage"
+)
+
+// 复用 dbutil 中的工具函数，避免在多个包中重复定义。
+var (
+	asInt64Ptr  = dbutil.AsInt64Ptr
+	asStringPtr = dbutil.AsStringPtr
 )
 
 // Compactor 管理文件的 compact 操作。
@@ -113,11 +120,10 @@ func (c *Compactor) checkAndCompactLocked(fileID int64) (bool, error) {
 	for {
 		if current["storageMode"].(string) == "delta" {
 			deltaCount++
-			baseID := current["baseID"]
-			if baseID == nil {
+			bid, ok := asInt64Ptr(current["baseID"])
+			if !ok {
 				break
 			}
-			bid := *baseID.(*int64)
 			next, err := c.db.GetVersion(context.Background(), bid)
 			if err != nil {
 				return false, fmt.Errorf("walk version %d: %w", bid, err)
@@ -164,11 +170,11 @@ func (c *Compactor) compactLatest(fileID int64, latest map[string]any) error {
 func (c *Compactor) rebuildContent(ver map[string]any) ([]byte, error) {
 	switch ver["storageMode"].(string) {
 	case "blob":
-		hash := ver["blobHash"].(*string)
-		if hash == nil {
+		hash, ok := asStringPtr(ver["blobHash"])
+		if !ok {
 			return nil, fmt.Errorf("blob mode but hash is nil")
 		}
-		return c.blobStore.Read(*hash)
+		return c.blobStore.Read(hash)
 	case "delta":
 		return c.rebuildFromDeltaChain(ver)
 	default:
@@ -190,11 +196,11 @@ func (c *Compactor) rebuildFromDeltaChain(ver map[string]any) ([]byte, error) {
 	for {
 		switch current["storageMode"].(string) {
 		case "blob":
-			hash := current["blobHash"].(*string)
-			if hash == nil {
+			hash, ok := asStringPtr(current["blobHash"])
+			if !ok {
 				return nil, fmt.Errorf("blob checkpoint but hash is nil")
 			}
-			content, err := c.blobStore.Read(*hash)
+			content, err := c.blobStore.Read(hash)
 			if err != nil {
 				return nil, fmt.Errorf("read blob checkpoint: %w", err)
 			}
@@ -205,23 +211,22 @@ func (c *Compactor) rebuildFromDeltaChain(ver map[string]any) ([]byte, error) {
 			return content, nil
 
 		case "delta":
-			offset := current["deltaOffset"].(*int64)
-			if offset == nil {
+			offset, ok := asInt64Ptr(current["deltaOffset"])
+			if !ok {
 				return nil, fmt.Errorf("delta mode but offset is nil")
 			}
 			fileID := current["fileID"].(int64)
 
-			_, diffs, _, err := c.deltaStore.ReadEntry(fileID, *offset)
+			_, diffs, _, err := c.deltaStore.ReadEntry(fileID, offset)
 			if err != nil {
 				return nil, fmt.Errorf("read delta entry: %w", err)
 			}
 			steps = append(steps, deltaStep{diffs: diffs})
 
-			baseID := current["baseID"]
-			if baseID == nil {
+			bid, ok := asInt64Ptr(current["baseID"])
+			if !ok {
 				return nil, fmt.Errorf("delta mode but base_id is nil")
 			}
-			bid := *baseID.(*int64)
 			next, err := c.db.GetVersion(context.Background(), bid)
 			if err != nil {
 				return nil, fmt.Errorf("walk version %d: %w", bid, err)

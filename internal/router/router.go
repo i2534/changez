@@ -1,7 +1,9 @@
 package router
 
 import (
+	"embed"
 	"encoding/json"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -26,6 +28,7 @@ func New(
 	fileMuMap *sync.Map,
 	compactor *compact.Compactor,
 	logger *slog.Logger,
+	webFS *embed.FS,
 ) http.Handler {
 	h := handler.NewHandler(database, blobStore, deltaStore, cfg, sourceIDs, logger, fileMuMap)
 	h.Compact = compactor
@@ -40,6 +43,10 @@ func New(
 		writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 	})
 
+	mux.HandleFunc("/api/ui/auth-required", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"required": token != ""})
+	})
+
 	mcpHandler := mcp.NewMCPHandler(h)
 	mux.Handle("/mcp", authMiddleware(mcpHandler, token))
 	mux.Handle("/mcp/", authMiddleware(mcpHandler, token))
@@ -52,13 +59,27 @@ func New(
 		h.HandleListFiles(w, r)
 	})
 
-	// 匹配 /api/files/something/versions, /api/files/something/restore/1 等子路由
-	apiMux.HandleFunc("/api/files/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/files" || r.URL.Path == "/api/files/" {
-			h.HandleListFiles(w, r)
-			return
+	// 文件操作子路由（path 通过 query parameter 传递）
+	apiMux.HandleFunc("/api/files/versions", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			h.HandleLog(w, r)
+		} else {
+			writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "仅支持 GET")
 		}
-		handleFileSubRoutes(h, w, r)
+	})
+	apiMux.HandleFunc("/api/files/restore", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			h.HandleRestore(w, r)
+		} else {
+			writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "仅支持 GET")
+		}
+	})
+	apiMux.HandleFunc("/api/files/diff", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			h.HandleDiff(w, r)
+		} else {
+			writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "仅支持 GET")
+		}
 	})
 
 	apiMux.HandleFunc("/api/projects", func(w http.ResponseWriter, r *http.Request) {
@@ -82,8 +103,40 @@ func New(
 
 	apiMux.HandleFunc("/api/stats", h.HandleStats)
 	apiMux.HandleFunc("/api/snapshots/latest", h.HandleLatestSnapshot)
+	apiMux.HandleFunc("/api/recent-activity", h.HandleRecentActivity)
 
 	mux.Handle("/api/", authMiddleware(loggingMiddleware(apiMux, h.Logger), token))
+
+if webFS != nil {
+		subFS, err := fs.Sub(*webFS, "dist")
+		if err == nil {
+			fileServer := http.FileServer(http.FS(subFS))
+			mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+				if !strings.HasPrefix(r.URL.Path, "/api/") && !strings.HasPrefix(r.URL.Path, "/mcp") && r.URL.Path != "/health" {
+					path := strings.TrimPrefix(r.URL.Path, "/")
+					if path == "" {
+						path = "index.html"
+					}
+					f, err := subFS.Open(path)
+					if err == nil {
+						f.Close()
+						fileServer.ServeHTTP(w, r)
+						return
+					}
+					indexPath := "dist/index.html"
+					indexData, err := webFS.ReadFile(indexPath)
+					if err == nil {
+						w.Header().Set("Content-Type", "text/html; charset=utf-8")
+						w.WriteHeader(http.StatusOK)
+						//nolint:errcheck
+						w.Write(indexData)
+						return
+					}
+					http.NotFound(w, r)
+				}
+			})
+		}
+	}
 
 	return mux
 }
@@ -136,35 +189,7 @@ func authMiddleware(next http.Handler, token string) http.Handler {
 	})
 }
 
-func handleFileSubRoutes(h *handler.Handler, w http.ResponseWriter, r *http.Request) {
-	path := r.URL.Path
 
-	switch {
-	case strings.HasSuffix(path, "/versions"):
-		if r.Method == http.MethodGet {
-			h.HandleLog(w, r)
-		} else {
-			writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "仅支持 GET")
-		}
-
-	case strings.Contains(path, "/restore/"):
-		if r.Method == http.MethodGet {
-			h.HandleRestore(w, r)
-		} else {
-			writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "仅支持 GET")
-		}
-
-	case strings.HasSuffix(path, "/diff"):
-		if r.Method == http.MethodGet {
-			h.HandleDiff(w, r)
-		} else {
-			writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "仅支持 GET")
-		}
-
-	default:
-		writeError(w, http.StatusNotFound, "NOT_FOUND", "未知的文件路由: "+path)
-	}
-}
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -174,5 +199,10 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 func writeError(w http.ResponseWriter, status int, code, message string) {
-	writeJSON(w, status, map[string]string{"error": code, "message": message})
+	writeJSON(w, status, map[string]any{
+		"error": map[string]string{
+			"code":    code,
+			"message": message,
+		},
+	})
 }

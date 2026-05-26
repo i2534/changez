@@ -162,22 +162,27 @@ Blob 文件布局：`[6B header][compressed/raw content]`
 每条 entry 的 header 格式（固定 14B，big-endian）：
 
 ```
-+--------+------------+---------------+--------------+-------------+
-| magic  | version_id | compress_method | delta_length | meta_length |
-| 4B     | 4B         | 2B              | 4B           | 4B          |
++--------+------------+---------------+--------------+
+| magic  | version_id | compress_method | delta_length |
+| 4B     | 4B         | 2B              | 4B           |
 ```
 
 - `magic`: `0x43440001` ("CD" + v1)
 - `version_id`: versions.id，用于校验
 - `compress_method`: `0x0000`=无压缩, `0x0001`=zstd, `0x0002+`=预留
 - `delta_length`: diff 内容长度（压缩后）
-- `meta_length`: `[1B flag][3B length]`，flag=0 表示无 metadata（此时 3B length 全为 0，整个字段 = 0x00000000）
 
-Entry 整体布局：`[14B header][delta_length bytes diff][meta_length bytes JSON]`
-
-**metadata 区域（紧跟 header + diff content 之后）：**
+**metadata 区域（紧跟 diff content 之后，独立于 header）：**
 
 delta 版本才写 metadata，blob/delete 版本不写。
+
+metadata 区域结构：`[4B metaHeader][meta JSON]`
+
+- `metaHeader`（4B，big-endian）：最高 bit (0x80000000) 为 flag 位，其余 31 bit 为 JSON 长度
+  - flag=0（整个 uint32 为 0）→ 无 metadata，JSON 部分不存在
+  - flag=1 → 有 metadata，后续紧跟 JSON 字节
+
+Entry 整体布局：`[14B header][delta_length bytes diff][4B metaHeader][meta JSON]`
 
 ```json
 {
@@ -282,12 +287,12 @@ Go `sync.Map` of `*sync.RWMutex`，粒度小，不影响不同文件的并发。
    - action 双重判断：客户端填了服务端校验修正（create+已存在→update，update+不存在→create）
    - 加 per-file 锁
    - 查最新版本，比 hash（首次无上一版本则跳过此步；相同 → unchanged，跳过）；blob 模式直接用 blob_hash 比对，delta 模式需先重建内容再算 hash（此时可直接跳过 delta 计算）；delete action 跳过 hash 比较（无 content），但若最新版已是 delete 则直接返回 unchanged
-   - delete action：复制上一版本的 storage_mode/blob_hash/delta_offset，写入 action=delete 版本记录（不计算 delta，base_id = 上一版本 id）
+   - delete action：写入 storage_mode="delete" 版本记录（blob_hash=NULL, delta_offset=NULL, base_id = 上一版本 id），不计算 delta
    - create/update：
      · 首次 → zstd 压缩完整 content（含 6B blob header），写入 `blobs/{sha256}` 文件，storage_mode=blob
      · 有历史 → 在内存中重建上一版本完整内容，DiffMain 生成 []Diff
      · delta_compress_threshold 判断：[]Diff 序列化后的原始字节 ≤512B 则无压缩，否则 zstd 压缩；若压缩后体积 ≥ 原始体积则存未压缩版本
-     · 序列化 []Diff + 压缩，构造 14B header + metadata JSON（sessionId, model, message）+ diff 数据，追加写入 deltas/{file_id}.delta
+     · 序列化 []Diff + 压缩，构造 14B header + diff 数据 + 4B metaHeader + metadata JSON（sessionId, model, message），追加写入 deltas/{file_id}.delta
    - 写入 versions 表（含 source_id, storage_mode, blob_hash/delta_offset, base_id（create=NULL, update=上一版本 id）, action）
    - 更新 files.latest_version_id
    - 释放锁
@@ -458,7 +463,8 @@ MCP 端点复用 HTTP server，额外暴露 RESTful 接口：
 | POST | /api/projects | 注册项目 |
 | DELETE | /api/projects/:id | 删除项目 |
 | GET  | /api/projects | 列出所有项目 |
-| GET  | /api/stats | 统计信息（projects/files/versions 数量） |
+| GET  | /api/stats | 统计信息（projects/files/versions 数量 + sources 分类统计） |
+| GET  | /api/snapshots/latest | 最新 snapshot 状态（TUI 轮询用） |
 
 认证：所有接口共用 `Authorization: Bearer <token>`。token 为空时不认证。
 
@@ -534,7 +540,7 @@ snapshot 批量上报时，单个文件失败不影响其他文件：
 | 数据库迁移 | 暂不处理 | CREATE TABLE IF NOT EXISTS 够用，有改动再说 |
 | 启动 compact | 不做 | 保证启动速度 |
 | 优雅关闭 | 10s | 足够处理进行中的请求 |
-| delta header 字段顺序 | magic, version_id, compress_method, delta_length, meta_length | 用户要求 deltaLength/metaLength 挨在一起，compressMethod 在前 |
+| delta header 字段顺序 | magic, version_id, compress_method, delta_length（14B） | meta_length 不在 header 中，是 diff 之后的独立 4B 字段 |
 | delta header 命名 | snake_case | 统一命名风格 |
 | 错误响应格式 | 统一 `{error: {code, message}}` | 结构化错误便于客户端处理 |
 | 幂等性 | SHA256 hash 去重 | 内容相同不写新记录，重试安全 |
@@ -542,9 +548,9 @@ snapshot 批量上报时，单个文件失败不影响其他文件：
 | delta 存储格式 | []Diff 序列化（非 unified diff 文本） | 存储/apply 直接用，仅返回时渲染 unified diff |
 | diff 库 | go-diff (diffmatchpatch) | DiffMain 生成 []Diff + PatchApply 还原 + 自行遍历 []Diff 构造 unified diff |
 | compact 策略 | 就地转换最新版本（方案 B） | 版本号连续，旧链可读 |
-| delete action 记录 | 继承上一版本 storage_mode/blob_hash/delta_offset | 防止链路中断 |
+| delete action 记录 | storage_mode="delete"（独立模式） | 简洁，rebuildContent 直接返回错误 |
 | project 路径重叠 | 允许 + 最长前缀匹配 | 灵活，注册时规范化路径防重复 |
-| /api/stats | 仅 projects/files/versions 数量 | 简单够用 |
+| /api/stats | projects/files/versions 数量 + sources 分类统计 | 简单够用 |
 | 健康检查 | GET /health | MCP client 连接探测 |
 | Go 项目结构 | cmd/main.go + internal/ | 标准 Go 布局 |
 | 认证 | Bearer token（可空） | MCP 和 HTTP 共用同一套鉴权 |

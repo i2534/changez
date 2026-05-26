@@ -38,6 +38,7 @@ func (h *Handler) ProcessSnapshot(ctx context.Context, req *SnapshotRequest) []S
 func (h *Handler) snapshotSingleFile(ctx context.Context, filePath, action, content, message string, sourceID int64, sessionID, model string) SnapshotResult {
 	project, err := h.DB.FindProjectByPath(ctx, filePath)
 	if err != nil {
+		h.Logger.Warn("snapshot: project not found", "path", filePath, "error", err)
 		return SnapshotResult{Path: filePath, Status: "error", Reason: err.Error()}
 	}
 
@@ -107,22 +108,19 @@ func (h *Handler) snapshotSingleFile(ctx context.Context, filePath, action, cont
 	contentHash := storage.ContentHash(contentBytes)
 
 	if latestVer != nil {
-		if latestVer["storageMode"].(string) == "blob" {
-			if h := latestVer["blobHash"]; h != nil {
-				prevHash := *h.(*string)
-				if prevHash == contentHash {
-					return SnapshotResult{Path: filePath, Status: "unchanged"}
-				}
+		switch latestVer["storageMode"].(string) {
+		case "blob":
+			// blob 模式直接比对 blob_hash，相同即视为未变更。
+			if prevHash, ok := asStringPtr(latestVer["blobHash"]); ok && prevHash == contentHash {
+				return SnapshotResult{Path: filePath, Status: "unchanged"}
 			}
-		}
-
-		if latestVer["storageMode"].(string) == "delta" || latestVer["storageMode"].(string) == "blob" {
+		case "delta":
+			// delta 模式需要先重建出上一版本的完整内容再比对 hash。
 			prevContent, err := h.rebuildContent(ctx, latestVer)
 			if err != nil {
 				return SnapshotResult{Path: filePath, Status: "error", Reason: fmt.Sprintf("重建上一版本内容失败: %v", err)}
 			}
-			prevHashCheck := storage.ContentHash(prevContent)
-			if prevHashCheck == contentHash {
+			if storage.ContentHash(prevContent) == contentHash {
 				return SnapshotResult{Path: filePath, Status: "unchanged"}
 			}
 		}

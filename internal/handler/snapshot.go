@@ -110,11 +110,11 @@ func (h *Handler) rebuildContent(ctx context.Context, ver map[string]any) ([]byt
 
 	switch storageMode {
 	case "blob":
-		hash := ver["blobHash"].(*string)
-		if hash == nil {
+		hash, ok := asStringPtr(ver["blobHash"])
+		if !ok {
 			return nil, fmt.Errorf("blob 模式但 hash 为空")
 		}
-		return h.BlobStore.Read(*hash)
+		return h.BlobStore.Read(hash)
 
 	case "delta":
 		return h.rebuildFromDeltaChain(ctx, ver)
@@ -141,11 +141,11 @@ func (h *Handler) rebuildFromDeltaChain(ctx context.Context, ver map[string]any)
 	for {
 		switch currentVer["storageMode"].(string) {
 		case "blob":
-			hash := currentVer["blobHash"].(*string)
-			if hash == nil {
+			hash, ok := asStringPtr(currentVer["blobHash"])
+			if !ok {
 				return nil, fmt.Errorf("blob checkpoint 但 hash 为空")
 			}
-			content, err := h.BlobStore.Read(*hash)
+			content, err := h.BlobStore.Read(hash)
 			if err != nil {
 				return nil, fmt.Errorf("读取 blob checkpoint 失败: %w", err)
 			}
@@ -156,23 +156,22 @@ func (h *Handler) rebuildFromDeltaChain(ctx context.Context, ver map[string]any)
 			return content, nil
 
 		case "delta":
-			offset := currentVer["deltaOffset"].(*int64)
-			if offset == nil {
+			offset, ok := asInt64Ptr(currentVer["deltaOffset"])
+			if !ok {
 				return nil, fmt.Errorf("delta 模式但 offset 为空")
 			}
 			fileID := currentVer["fileID"].(int64)
 
-			_, diffs, _, err := h.DeltaStore.ReadEntry(fileID, *offset)
+			_, diffs, _, err := h.DeltaStore.ReadEntry(fileID, offset)
 			if err != nil {
 				return nil, fmt.Errorf("读取 delta entry 失败: %w", err)
 			}
 			steps = append(steps, deltaStep{diffs: diffs})
 
-			baseID := currentVer["baseID"]
-			if baseID == nil {
+			bid, ok := asInt64Ptr(currentVer["baseID"])
+			if !ok {
 				return nil, fmt.Errorf("delta 模式但 base_id 为空")
 			}
-			bid := *baseID.(*int64)
 			baseVer, err := h.DB.GetVersion(ctx, bid)
 			if err != nil {
 				return nil, fmt.Errorf("查询 base version %d 失败: %w", bid, err)

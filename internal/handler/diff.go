@@ -16,7 +16,7 @@ func (h *Handler) HandleDiff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	path := extractPathFromURL(r.URL.Path, "/api/files/", "/diff")
+	path := r.URL.Query().Get("path")
 	if path == "" {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "path 参数缺失")
 		return
@@ -118,13 +118,14 @@ func (h *Handler) doDiff(ctx context.Context, path string, versionA, versionB in
 	var diffs []diffmatchpatch.Diff
 	isAdjacentDelta := false
 
-	if verB["storageMode"].(string) == "delta" && verB["baseID"] != nil && *verB["baseID"].(*int64) == verA["id"].(int64) {
-		offset := verB["deltaOffset"].(*int64)
-		if offset != nil {
-			_, readDiffs, _, err := h.DeltaStore.ReadEntry(fileID, *offset)
-			if err == nil {
-				diffs = readDiffs
-				isAdjacentDelta = true
+	if verB["storageMode"].(string) == "delta" {
+		if baseID, ok := asInt64Ptr(verB["baseID"]); ok && baseID == verA["id"].(int64) {
+			if offset, ok := asInt64Ptr(verB["deltaOffset"]); ok {
+				_, readDiffs, _, err := h.DeltaStore.ReadEntry(fileID, offset)
+				if err == nil {
+					diffs = readDiffs
+					isAdjacentDelta = true
+				}
 			}
 		}
 	}
