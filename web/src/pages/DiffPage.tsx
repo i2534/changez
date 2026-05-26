@@ -54,6 +54,10 @@ export default function DiffPage() {
     }
   };
 
+  if (!from || !to) {
+    return <p className="py-8 text-center text-gray-500">Select two versions to compare.</p>;
+  }
+
   if (loading) {
     return (
       <div className="h-64 animate-pulse rounded-lg bg-gray-800" />

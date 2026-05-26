@@ -117,8 +117,14 @@ func (c *Compactor) checkAndCompactLocked(fileID int64) (bool, error) {
 	// 统计连续 delta 版本数
 	deltaCount := 0
 	current := latest
-	for {
+	visited := make(map[int64]bool)
+	for deltaCount < 10000 {
 		if current["storageMode"].(string) == "delta" {
+			vid := current["id"].(int64)
+			if visited[vid] {
+				return false, fmt.Errorf("cycle detected in delta chain at version %d", vid)
+			}
+			visited[vid] = true
 			deltaCount++
 			bid, ok := asInt64Ptr(current["baseID"])
 			if !ok {
@@ -132,6 +138,9 @@ func (c *Compactor) checkAndCompactLocked(fileID int64) (bool, error) {
 		} else {
 			break
 		}
+	}
+	if deltaCount >= 10000 {
+		return false, fmt.Errorf("delta chain depth limit (10000) reached for file %d", fileID)
 	}
 
 	if deltaCount < c.cfg.MaxDeltaChain {
@@ -147,7 +156,7 @@ func (c *Compactor) checkAndCompactLocked(fileID int64) (bool, error) {
 
 // compactLatest 将最新版本就地转换为 blob 模式。
 func (c *Compactor) compactLatest(fileID int64, latest map[string]any) error {
-	content, err := c.rebuildContent(latest)
+	content, err := c.rebuildContent(context.Background(), latest)
 	if err != nil {
 		return fmt.Errorf("rebuild content: %w", err)
 	}
@@ -167,7 +176,7 @@ func (c *Compactor) compactLatest(fileID int64, latest map[string]any) error {
 }
 
 // rebuildContent 根据版本记录重建完整文件内容。
-func (c *Compactor) rebuildContent(ver map[string]any) ([]byte, error) {
+func (c *Compactor) rebuildContent(ctx context.Context, ver map[string]any) ([]byte, error) {
 	switch ver["storageMode"].(string) {
 	case "blob":
 		hash, ok := asStringPtr(ver["blobHash"])
@@ -176,14 +185,14 @@ func (c *Compactor) rebuildContent(ver map[string]any) ([]byte, error) {
 		}
 		return c.blobStore.Read(hash)
 	case "delta":
-		return c.rebuildFromDeltaChain(ver)
+		return c.rebuildFromDeltaChain(ctx, ver)
 	default:
 		return nil, fmt.Errorf("unsupported storage mode: %s", ver["storageMode"].(string))
 	}
 }
 
 // rebuildFromDeltaChain 从指定版本回溯到最近的 blob checkpoint，重建完整内容。
-func (c *Compactor) rebuildFromDeltaChain(ver map[string]any) ([]byte, error) {
+func (c *Compactor) rebuildFromDeltaChain(ctx context.Context, ver map[string]any) ([]byte, error) {
 	dmp := diffmatchpatch.New()
 
 	type deltaStep struct {
@@ -192,8 +201,13 @@ func (c *Compactor) rebuildFromDeltaChain(ver map[string]any) ([]byte, error) {
 
 	var steps []deltaStep
 	current := ver
+	visited := make(map[int64]bool)
 
-	for {
+	for depth := 0; depth < 1000; depth++ {
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("context cancelled while walking delta chain: %w", err)
+		}
+
 		switch current["storageMode"].(string) {
 		case "blob":
 			hash, ok := asStringPtr(current["blobHash"])
@@ -211,6 +225,12 @@ func (c *Compactor) rebuildFromDeltaChain(ver map[string]any) ([]byte, error) {
 			return content, nil
 
 		case "delta":
+			vid := current["id"].(int64)
+			if visited[vid] {
+				return nil, fmt.Errorf("cycle detected in delta chain at version %d", vid)
+			}
+			visited[vid] = true
+
 			offset, ok := asInt64Ptr(current["deltaOffset"])
 			if !ok {
 				return nil, fmt.Errorf("delta mode but offset is nil")
@@ -227,7 +247,7 @@ func (c *Compactor) rebuildFromDeltaChain(ver map[string]any) ([]byte, error) {
 			if !ok {
 				return nil, fmt.Errorf("delta mode but base_id is nil")
 			}
-			next, err := c.db.GetVersion(context.Background(), bid)
+			next, err := c.db.GetVersion(ctx, bid)
 			if err != nil {
 				return nil, fmt.Errorf("walk version %d: %w", bid, err)
 			}
@@ -237,6 +257,8 @@ func (c *Compactor) rebuildFromDeltaChain(ver map[string]any) ([]byte, error) {
 			return nil, fmt.Errorf("unsupported storage mode: %s", current["storageMode"].(string))
 		}
 	}
+
+	return nil, fmt.Errorf("delta chain depth limit (1000) reached")
 }
 
 // scanAndCompact 扫描所有有版本记录的文件并 compact 链过长的。

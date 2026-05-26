@@ -1,8 +1,10 @@
 export function relativeTime(dateStr: string, t?: (key: string, vars?: any) => string): string {
   try {
     const date = new Date(dateStr);
+    if (isNaN(date.getTime())) return dateStr;
     const now = new Date();
     const diffMs = now.getTime() - date.getTime();
+    if (diffMs < 0) return date.toLocaleDateString();
     const diffSec = Math.floor(diffMs / 1000);
     const diffMin = Math.floor(diffSec / 60);
     const diffHour = Math.floor(diffMin / 60);

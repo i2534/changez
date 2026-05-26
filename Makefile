@@ -4,7 +4,7 @@ CMD     := ./cmd/changez
 PIDFILE := .changez.pid
 CONFIG  := config.yaml
 
-.PHONY: build start stop check restart clean build-web
+.PHONY: build start stop check restart clean build-web test vet fmt
 
 build-web:
 	cd web && npm install && npm run build
@@ -51,3 +51,12 @@ dev:
 clean: stop
 	rm -rf $(DIST)
 	rm -f $(PIDFILE)
+
+test:
+	go test ./... -count=1 -race
+
+vet:
+	go vet ./...
+
+fmt:
+	gofmt -w ./internal/ ./cmd/ ./web/embed.go

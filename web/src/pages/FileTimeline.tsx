@@ -71,6 +71,10 @@ export default function FileTimeline() {
     }
   };
 
+  if (!projectName || !filePath) {
+    return <p className="py-8 text-center text-gray-500">Select a file to view history.</p>;
+  }
+
   if (loading) {
     return (
       <div className="space-y-3">

@@ -196,7 +196,9 @@ export default function FileList({
   searchQuery: string;
   onSearchChange: (q: string) => void;
 }) {
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [expanded, _setExpanded] = useState<Set<string>>(new Set());
+void _setExpanded;
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const { t } = useTranslation();
 
   const filtered = useMemo(() => {
@@ -214,22 +216,20 @@ export default function FileList({
   }, [tree, searchQuery]);
 
   const effectiveExpanded = useMemo(() => {
-    if (searchQuery.trim()) {
-      const merged = new Set<string>(expanded);
-      for (const p of autoExpanded) merged.add(p);
-      return merged;
-    }
-    return expanded;
-  }, [expanded, autoExpanded, searchQuery]);
+    const merged = new Set<string>(expanded);
+    for (const p of autoExpanded) merged.add(p);
+    for (const p of collapsed) merged.delete(p);
+    return merged;
+  }, [expanded, autoExpanded, searchQuery, collapsed]);
 
-  const toggle = (name: string) => {
-    const next = new Set(effectiveExpanded);
-    if (next.has(name)) {
-      next.delete(name);
+  const toggle = (path: string) => {
+    const next = new Set(collapsed);
+    if (effectiveExpanded.has(path)) {
+      next.add(path);
     } else {
-      next.add(name);
+      next.delete(path);
     }
-    setExpanded(next);
+    setCollapsed(next);
   };
 
   return (

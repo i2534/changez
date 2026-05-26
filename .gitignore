@@ -1,6 +1,7 @@
 # Binaries
 dist/
 *.test
+/changez
 
 # Runtime
 *.pid
@@ -27,4 +28,6 @@ Thumbs.db
 web/node_modules/
 web/dist/
 !web/dist/.gitkeep
-changez
+
+# Reasonix
+REASONIX.md

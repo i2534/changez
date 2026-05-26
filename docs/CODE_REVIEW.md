@@ -20,7 +20,7 @@
 | 7 | P3 | `snapshot.go` 冗余 hash 检查 + 变量遮蔽 | ✅ 已修复（switch 分支重构） |
 | 8 | P3 | `delta.go` metaHeader 死代码 | ✅ 已删 |
 | 9 | P3 | URL 路径解析重复（`extractPathFromURL` / `parseRestorePath`） | ⚪ 暂未处理（不阻塞） |
-| 10 | P3 | `config.FindConfig` 无人调用 | ⚪ 暂未处理（不阻塞） |
+| 10 | P3 | `config.FindConfig` 无人调用 | ✅ 已修复 |
 | 11 | P3 | 仓库残留二进制/日志 | ⚪ 暂未处理 |
 | 12 | P3 | `0644` → `0o644` 风格统一 | ✅ 主要文件已修复 |
 

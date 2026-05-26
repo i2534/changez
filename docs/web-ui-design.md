@@ -22,9 +22,9 @@
 | GET | `/health` | 健康检查 |
 | POST | `/api/snapshot` | 捕获文件快照 |
 | GET | `/api/files?project=&limit=&offset=` | 文件列表 |
-| GET | `/api/files/{path}/versions?source=&action=&since=&until=&limit=&offset=` | 文件版本历史 |
-| GET | `/api/files/{path}/diff?from=&to=` | 两版本 unified diff |
-| GET | `/api/files/{path}/restore/{versionId}` | 恢复指定版本内容 |
+| GET | `/api/files/versions?path=<path>&source=&action=&since=&until=&limit=&offset=` | 文件版本历史 |
+| GET | `/api/files/diff?path=<path>&from=<from>&to=<to>` | 两版本 unified diff |
+| GET | `/api/files/restore?path=<path>&version=<versionId>` | 恢复指定版本内容 |
 | GET | `/api/projects` | 项目列表 |
 | POST | `/api/projects` | 创建项目 |
 | DELETE | `/api/projects/{id}` | 删除项目 |

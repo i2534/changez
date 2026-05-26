@@ -153,6 +153,9 @@ func (s *DeltaStore) Append(fileID, versionID int64, diffs []diffmatchpatch.Diff
 	if _, err := f.Write(buf.Bytes()); err != nil {
 		return 0, false, fmt.Errorf("write delta entry: %w", err)
 	}
+	if err := f.Sync(); err != nil {
+		return 0, false, fmt.Errorf("sync delta entry: %w", err)
+	}
 
 	return entryOffset, compressed, nil
 }

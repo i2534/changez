@@ -57,7 +57,7 @@ export async function apiJSON<T>(path: string, options?: RequestInit): Promise<T
     throw new Error(`API error: ${res.status} ${res.statusText}${errText ? ': ' + errText : ''}`);
   }
   const text = await res.text();
-  if (!text) return {} as T;
+  if (!text) throw new Error("Empty response");
   return JSON.parse(text) as T;
 }
 

@@ -272,7 +272,7 @@ func TestRebuildContent(t *testing.T) {
 	require.NoError(t, err)
 
 	// 通过 compactor 的 rebuildContent 方法重建内容
-	rebuilt, err := f.compactor.rebuildContent(ver)
+	rebuilt, err := f.compactor.rebuildContent(context.Background(), ver)
 	require.NoError(t, err)
 	assert.Equal(t, content, rebuilt)
 }
@@ -304,7 +304,7 @@ func TestRebuildFromDeltaChain(t *testing.T) {
 	require.NoError(t, err)
 
 	// 从 delta 链重建内容
-	rebuilt, err := f.compactor.rebuildFromDeltaChain(latest)
+	rebuilt, err := f.compactor.rebuildFromDeltaChain(context.Background(), latest)
 	require.NoError(t, err)
 	assert.Equal(t, content3, string(rebuilt))
 }
@@ -473,7 +473,7 @@ func TestRebuildLongDeltaChain(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, latest)
 
-	rebuilt, err := f.compactor.rebuildFromDeltaChain(latest)
+	rebuilt, err := f.compactor.rebuildFromDeltaChain(context.Background(), latest)
 	require.NoError(t, err)
 	assert.Equal(t, currentContent, string(rebuilt))
 }
