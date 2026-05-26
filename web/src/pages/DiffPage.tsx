@@ -23,17 +23,20 @@ export default function DiffPage() {
 
   useEffect(() => {
     if (!projectName || !filePath || !from || !to) return;
+    const abort = new AbortController();
     setContent(null);
     setLoading(true);
     apiJSON<DiffResponse>(
-      `/api/files/diff?path=${encodeURIComponent(filePath)}&from=${from}&to=${to}`
+      `/api/files/diff?path=${encodeURIComponent(filePath)}&from=${from}&to=${to}`, { signal: abort.signal }
     )
       .then(setDiffData)
       .catch((err) => {
+        if (abort.signal.aborted) return;
         toast.error(err instanceof Error ? err.message : t("diff.failed_to_load"));
       })
       .finally(() => setLoading(false));
-  }, [projectName, filePath, from, to]);
+    return () => abort.abort();
+  }, [projectName, filePath, from, to, t]);
 
   const handleViewContent = async (versionId: number) => {
     try {

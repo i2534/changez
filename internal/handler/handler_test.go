@@ -287,7 +287,7 @@ func TestLog(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 
 	// Get log (absolute path needs leading / after /api/files/)
-	req2 := httptest.NewRequest(http.MethodGet, "/api/files//home/user/proj/main.go/versions", nil)
+	req2 := httptest.NewRequest(http.MethodGet, "/api/files/versions?path=/home/user/proj/main.go", nil)
 	w2 := httptest.NewRecorder()
 	h.HandleLog(w2, req2)
 
@@ -303,7 +303,7 @@ func TestLog_NotFound(t *testing.T) {
 	h, _, _, _ := setupTest(t)
 	createProject(t, h)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/files//home/user/proj/nonexistent.go/versions", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/files/versions?path=/home/user/proj/nonexistent.go", nil)
 	w := httptest.NewRecorder()
 
 	h.HandleLog(w, req)
@@ -330,7 +330,7 @@ func TestRestore(t *testing.T) {
 	versionID := snapResp.Results[0].VersionID
 
 	// Restore
-	req2 := httptest.NewRequest(http.MethodGet, "/api/files//home/user/proj/main.go/restore/"+int64ToStr(*versionID), nil)
+	req2 := httptest.NewRequest(http.MethodGet, "/api/files/restore?path=/home/user/proj/main.go&version="+int64ToStr(*versionID), nil)
 	w2 := httptest.NewRecorder()
 	h.HandleRestore(w2, req2)
 
@@ -346,7 +346,7 @@ func TestRestore_NonExistent(t *testing.T) {
 	h, _, _, _ := setupTest(t)
 	createProject(t, h)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/files//home/user/proj/main.go/restore/999", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/files/restore?path=/home/user/proj/main.go&version=999", nil)
 	w := httptest.NewRecorder()
 
 	h.HandleRestore(w, req)
@@ -379,7 +379,7 @@ func TestRestore_DeleteVersion(t *testing.T) {
 	deleteVersionID := snapResp.Results[0].VersionID
 
 	// Try to restore delete version
-	req3 := httptest.NewRequest(http.MethodGet, "/api/files//home/user/proj/main.go/restore/"+int64ToStr(*deleteVersionID), nil)
+	req3 := httptest.NewRequest(http.MethodGet, "/api/files/restore?path=/home/user/proj/main.go&version="+int64ToStr(*deleteVersionID), nil)
 	w3 := httptest.NewRecorder()
 	h.HandleRestore(w3, req3)
 
@@ -417,7 +417,7 @@ func TestDiff(t *testing.T) {
 	toID := resp2.Results[0].VersionID
 
 	// Diff
-	req3 := httptest.NewRequest(http.MethodGet, "/api/files//home/user/proj/main.go/diff?from="+int64ToStr(*fromID)+"&to="+int64ToStr(*toID), nil)
+	req3 := httptest.NewRequest(http.MethodGet, "/api/files/diff?path=/home/user/proj/main.go&from="+int64ToStr(*fromID)+"&to="+int64ToStr(*toID), nil)
 	w3 := httptest.NewRecorder()
 	h.HandleDiff(w3, req3)
 
@@ -458,7 +458,7 @@ func TestDiff_AdjacentDelta(t *testing.T) {
 	toID := resp2.Results[0].VersionID
 
 	// Diff between adjacent versions should use delta optimization
-	req3 := httptest.NewRequest(http.MethodGet, "/api/files//home/user/proj/main.go/diff?from="+int64ToStr(*fromID)+"&to="+int64ToStr(*toID), nil)
+	req3 := httptest.NewRequest(http.MethodGet, "/api/files/diff?path=/home/user/proj/main.go&from="+int64ToStr(*fromID)+"&to="+int64ToStr(*toID), nil)
 	w3 := httptest.NewRecorder()
 	h.HandleDiff(w3, req3)
 
@@ -469,7 +469,7 @@ func TestDiff_MissingParams(t *testing.T) {
 	h, _, _, _ := setupTest(t)
 	createProject(t, h)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/files//home/user/proj/main.go/diff", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/files/diff", nil)
 	w := httptest.NewRecorder()
 
 	h.HandleDiff(w, req)
@@ -481,7 +481,7 @@ func TestDiff_NotFound(t *testing.T) {
 	h, _, _, _ := setupTest(t)
 	createProject(t, h)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/files//home/user/proj/main.go/diff?from=999&to=1000", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/files/diff?path=/home/user/proj/main.go&from=999&to=1000", nil)
 	w := httptest.NewRecorder()
 
 	h.HandleDiff(w, req)

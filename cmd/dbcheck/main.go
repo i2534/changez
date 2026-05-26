@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"log"
 
@@ -10,7 +9,7 @@ import (
 )
 
 func main() {
-	d, err := db.Open("/home/lan/workspace/go/changez/data")
+	d, err := db.Open("data")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -35,16 +34,16 @@ func main() {
 	}
 	rows.Close()
 
-	rows2, err := d.Query(context.Background(), "SELECT id, file_id, source_id, version_index, created_at FROM versions ORDER BY id DESC LIMIT 10")
+	rows2, err := d.Query(context.Background(), "SELECT id, file_id, source_id, action, changed_at FROM versions ORDER BY id DESC LIMIT 10")
 	if err != nil {
 		log.Fatal(err)
 	}
 	fmt.Printf("\nVersions (last 10):\n")
 	for rows2.Next() {
-		var id, fileID, sourceID, vindex int64
-		var created string
-		rows2.Scan(&id, &fileID, &sourceID, &vindex, &created)
-		fmt.Printf("  [%d] file=%d | source=%d | index=%d | %s\n", id, fileID, sourceID, vindex, created)
+		var id, fileID, sourceID int64
+		var action, changed string
+		rows2.Scan(&id, &fileID, &sourceID, &action, &changed)
+		fmt.Printf("  [%d] file=%d | source=%d | action=%s | %s\n", id, fileID, sourceID, action, changed)
 	}
 	rows2.Close()
 
@@ -55,5 +54,4 @@ func main() {
 	var recentCount int
 	err = d.Handle().QueryRow("SELECT COUNT(*) FROM versions WHERE created_at > datetime('now', '-24 hours')").Scan(&recentCount)
 	fmt.Printf("Versions in last 24h: %d\n", recentCount)
-	_ = sql.ErrNoRows
 }

@@ -46,16 +46,6 @@ func (h *Handler) HandleCreateProject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	existingProjects, err := h.DB.ListProjects(ctx)
-	if err == nil {
-		for _, p := range existingProjects {
-			if p["rootPath"].(string) == rootPath {
-				h.Logger.Warn("duplicate rootPath", "root_path", rootPath, "existing_project", p["name"])
-				writeError(w, http.StatusConflict, "INVALID_REQUEST", fmt.Sprintf("路径 %s 已注册为项目 %s", rootPath, p["name"].(string)))
-				return
-			}
-		}
-	}
 
 	id, err := h.DB.CreateProject(ctx, name, rootPath, extra)
 	if err != nil {

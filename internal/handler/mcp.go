@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/changez/changez/internal/storage"
@@ -139,16 +140,21 @@ func (h *Handler) snapshotSingleFile(ctx context.Context, filePath, action, cont
 
 		versionID, txErr := tx.CreateVersion(ctx, fileID, "blob", &hash, nil, nil, action, sourceID)
 		if txErr != nil {
-			tx.Rollback()
+			if rbErr := tx.Rollback(); rbErr != nil {
+				slog.Error("rollback failed", "error", rbErr)
+			}
 			return SnapshotResult{Path: filePath, Status: "error", Reason: fmt.Sprintf("写入版本记录失败: %v", txErr)}
 		}
 
 		if txErr := tx.UpdateLatestVersion(ctx, fileID, versionID); txErr != nil {
-			tx.Rollback()
+			if rbErr := tx.Rollback(); rbErr != nil {
+				slog.Error("rollback failed", "error", rbErr)
+			}
 			return SnapshotResult{Path: filePath, Status: "error", Reason: fmt.Sprintf("更新 latest_version 失败: %v", txErr)}
 		}
 
 		if txErr := tx.Commit(); txErr != nil {
+			tx.Rollback()
 			return SnapshotResult{Path: filePath, Status: "error", Reason: fmt.Sprintf("提交事务失败: %v", txErr)}
 		}
 
@@ -180,28 +186,39 @@ func (h *Handler) snapshotSingleFile(ctx context.Context, filePath, action, cont
 
 	versionID, txErr := tx.CreateVersion(ctx, fileID, "delta", nil, nil, &baseID, action, sourceID)
 	if txErr != nil {
-		tx.Rollback()
+		if rbErr := tx.Rollback(); rbErr != nil {
+			slog.Error("rollback failed", "error", rbErr)
+		}
 		return SnapshotResult{Path: filePath, Status: "error", Reason: fmt.Sprintf("写入版本记录失败: %v", txErr)}
 	}
 
 	threshold := h.Config.Compact.DeltaCompressThreshold
 	offset, _, txErr := h.DeltaStore.Append(fileID, versionID, diffs, meta, threshold)
 	if txErr != nil {
-		tx.Rollback()
+		if rbErr := tx.Rollback(); rbErr != nil {
+			slog.Error("rollback failed", "error", rbErr)
+		}
 		return SnapshotResult{Path: filePath, Status: "error", Reason: fmt.Sprintf("写入 delta 失败: %v", txErr)}
 	}
 
 	if txErr := tx.UpdateVersionStorage(ctx, versionID, "delta", nil, &offset); txErr != nil {
-		tx.Rollback()
+		if rbErr := tx.Rollback(); rbErr != nil {
+			slog.Error("rollback failed", "error", rbErr)
+		}
 		return SnapshotResult{Path: filePath, Status: "error", Reason: fmt.Sprintf("更新 delta_offset 失败: %v", txErr)}
 	}
 
 	if txErr := tx.UpdateLatestVersion(ctx, fileID, versionID); txErr != nil {
-		tx.Rollback()
+		if rbErr := tx.Rollback(); rbErr != nil {
+			slog.Error("rollback failed", "error", rbErr)
+		}
 		return SnapshotResult{Path: filePath, Status: "error", Reason: fmt.Sprintf("更新 latest_version 失败: %v", txErr)}
 	}
 
 	if txErr := tx.Commit(); txErr != nil {
+		if rbErr := tx.Rollback(); rbErr != nil {
+			slog.Error("rollback failed", "error", rbErr)
+		}
 		return SnapshotResult{Path: filePath, Status: "error", Reason: fmt.Sprintf("提交事务失败: %v", txErr)}
 	}
 

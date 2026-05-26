@@ -13,13 +13,16 @@ export default function Projects() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    apiJSON<{ projects: Project[] }>("/api/projects")
+    const abort = new AbortController();
+    apiJSON<{ projects: Project[] }>("/api/projects", { signal: abort.signal })
       .then((data) => setProjects(data.projects))
       .catch((err) => {
+        if (abort.signal.aborted) return;
         toast.error(err instanceof Error ? err.message : t("projects.failed_to_load"));
       })
       .finally(() => setLoading(false));
-  }, []);
+    return () => abort.abort();
+  }, [t]);
 
   const filtered = search.trim()
     ? projects.filter(

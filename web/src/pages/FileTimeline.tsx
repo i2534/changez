@@ -21,18 +21,21 @@ export default function FileTimeline() {
 
   useEffect(() => {
     if (!projectName || !filePath) return;
+    const abort = new AbortController();
     setContent(null);
     setSelectedIds([]);
     setLoading(true);
     apiJSON<VersionResponse>(
-      `/api/files/versions?path=${encodeURIComponent(filePath)}`
+      `/api/files/versions?path=${encodeURIComponent(filePath)}`, { signal: abort.signal }
     )
       .then(setResponse)
       .catch((err) => {
+        if (abort.signal.aborted) return;
         toast.error(err instanceof Error ? err.message : t("timeline.failed_to_load"));
       })
       .finally(() => setLoading(false));
-  }, [projectName, filePath]);
+    return () => abort.abort();
+  }, [projectName, filePath, t]);
 
   const handleVersionClick = (id: number) => {
     setSelectedIds((prev) => {

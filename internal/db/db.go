@@ -4,7 +4,9 @@ package db
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"strings"
 
@@ -49,6 +51,11 @@ func Open(dataDir string) (*DB, error) {
 	if err := d.seedSources(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("seed sources: %w", err)
+	}
+
+	// 启动恢复：清理崩溃遗留的 orphan 版本记录
+	if err := d.RecoverOrphans(context.Background()); err != nil {
+		slog.Warn("recover orphans failed during startup", "error", err)
 	}
 
 	return d, nil
@@ -185,9 +192,9 @@ func (d *DB) LoadSourceNameToID(ctx context.Context) (map[string]int64, error) {
 // ResolvePathsToProjects 批量将文件路径映射到项目 rootPath。
 // 仅执行 2 次查询：一次 files 表 IN 匹配，一次 projects 全表（fallback 前缀匹配）。
 // 返回 path → rootPath 的映射，未匹配到的路径不会出现在结果中。
-func (d *DB) ResolvePathsToProjects(ctx context.Context, paths []string) map[string]string {
+func (d *DB) ResolvePathsToProjects(ctx context.Context, paths []string) (map[string]string, error) {
 	if len(paths) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	// 去重
@@ -215,16 +222,17 @@ func (d *DB) ResolvePathsToProjects(ctx context.Context, paths []string) map[str
 		JOIN projects p ON f.project_id = p.id
 		WHERE f.path IN (%s) AND p.is_deleted = 0
 	`, strings.Join(placeholders, ",")), args...)
-	if err == nil {
-		defer rows.Close()
-		for rows.Next() {
-			var fPath, rPath string
-			if err := rows.Scan(&fPath, &rPath); err == nil {
-				result[fPath] = rPath
-			}
-		}
-		rows.Close()
+	if err != nil {
+		return nil, fmt.Errorf("query files for path resolution: %w", err)
 	}
+	defer rows.Close()
+	for rows.Next() {
+		var fPath, rPath string
+		if err := rows.Scan(&fPath, &rPath); err == nil {
+			result[fPath] = rPath
+		}
+	}
+	rows.Close()
 
 	// 2. fallback：对未匹配到的路径做 root_path 前缀匹配
 	unmatched := make([]string, 0, len(uniquePaths))
@@ -234,14 +242,14 @@ func (d *DB) ResolvePathsToProjects(ctx context.Context, paths []string) map[str
 		}
 	}
 	if len(unmatched) == 0 {
-		return result
+		return result, nil
 	}
 
 	projRows, err := d.db.QueryContext(ctx,
 		"SELECT root_path FROM projects WHERE is_deleted = 0 ORDER BY LENGTH(root_path) DESC",
 	)
 	if err != nil {
-		return result
+		return nil, fmt.Errorf("query projects for path resolution: %w", err)
 	}
 	defer projRows.Close()
 
@@ -262,7 +270,7 @@ func (d *DB) ResolvePathsToProjects(ctx context.Context, paths []string) map[str
 		}
 	}
 
-	return result
+	return result, nil
 }
 
 // FindProjectByPath 查找文件所属项目。
@@ -286,6 +294,8 @@ func (d *DB) FindProjectByPath(ctx context.Context, path string) (map[string]any
 			"rootPath": rootPath,
 			"extra":    extra,
 		}, nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("query project by path: %w", err)
 	}
 
 	// 2. 回退：root_path 前缀匹配（用于绝对路径）
@@ -469,9 +479,7 @@ func (t *Tx) Commit() error {
 }
 
 func (t *Tx) Rollback() error {
-	// Rollback on already-committed tx is a no-op warning, ignore
-	_ = t.tx.Rollback()
-	return nil
+	return t.tx.Rollback()
 }
 
 // CreateVersion 事务内创建版本记录。

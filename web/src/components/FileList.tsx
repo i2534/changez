@@ -4,7 +4,7 @@ import { relativeTime } from "../utils";
 import { File } from "../api/types";
 
 type TreeNode =
-  | { type: "dir"; name: string; children: TreeNode[] }
+  | { type: "dir"; name: string; path: string; children: TreeNode[] }
   | { type: "file"; name: string; file: File };
 
 function buildTree(files: File[]): TreeNode[] {
@@ -24,7 +24,7 @@ function buildTree(files: File[]): TreeNode[] {
       currentPath = currentPath ? `${currentPath}/${seg}` : seg;
 
       if (!dirMap.has(currentPath)) {
-        const dirNode: TreeNode = { type: "dir", name: seg, children: [] };
+        const dirNode: TreeNode = { type: "dir", name: seg, path: currentPath, children: [] };
         dirMap.set(currentPath, dirNode);
         const { children } = currentDir;
         let inserted = false;
@@ -38,7 +38,7 @@ function buildTree(files: File[]): TreeNode[] {
         if (!inserted) children.push(dirNode);
       }
 
-      const dirNode = dirMap.get(currentPath)! as { type: "dir"; name: string; children: TreeNode[] };
+      const dirNode = dirMap.get(currentPath)! as { type: "dir"; name: string; path: string; children: TreeNode[] };
       currentDir = dirNode;
     }
 
@@ -124,11 +124,11 @@ function TreeNodeView({
     );
   }
 
-  const isExpanded = expanded.has(node.name) || false;
+  const isExpanded = expanded.has(node.path) || false;
   return (
     <div>
       <button
-        onClick={() => onToggle(node.name)}
+        onClick={() => onToggle(node.path)}
         className="flex w-full items-center rounded px-2 py-1.5 text-left hover:bg-gray-700"
         style={{ paddingLeft: `${depth * 16 + 8}px` }}
       >

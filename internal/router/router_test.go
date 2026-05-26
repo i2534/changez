@@ -38,7 +38,7 @@ func setupRouter(t *testing.T) http.Handler {
 	logger := loggerWrapper.Logger
 	compactor := compact.New(database, bs, ds, &cfg.Compact, logger, fileMuMap)
 
-	return New(database, bs, ds, &cfg, sourceIDs, "", fileMuMap, compactor, logger)
+	return New(database, bs, ds, &cfg, sourceIDs, "", fileMuMap, compactor, logger, nil)
 }
 
 func setupRouterWithToken(t *testing.T, token string) http.Handler {
@@ -63,7 +63,7 @@ func setupRouterWithToken(t *testing.T, token string) http.Handler {
 	logger := loggerWrapper.Logger
 	compactor := compact.New(database, bs, ds, &cfg.Compact, logger, fileMuMap)
 
-	return New(database, bs, ds, &cfg, sourceIDs, token, fileMuMap, compactor, logger)
+	return New(database, bs, ds, &cfg, sourceIDs, token, fileMuMap, compactor, logger, nil)
 }
 
 func createProjectViaRouter(t *testing.T, router http.Handler) {
@@ -272,7 +272,7 @@ func TestRouterVersionsRoute(t *testing.T) {
 	h.HandleSnapshot(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
 
-	req2 := httptest.NewRequest(http.MethodGet, "/api/files//home/user/proj/main.go/versions", nil)
+	req2 := httptest.NewRequest(http.MethodGet, "/api/files/versions?path=/home/user/proj/main.go", nil)
 	w2 := httptest.NewRecorder()
 	h.HandleLog(w2, req2)
 
@@ -297,7 +297,7 @@ func TestRouterDiffRoute(t *testing.T) {
 	h.HandleSnapshot(w2, req2)
 	require.Equal(t, http.StatusOK, w2.Code)
 
-	req3 := httptest.NewRequest(http.MethodGet, "/api/files//home/user/proj/main.go/diff?from=1&to=2", nil)
+	req3 := httptest.NewRequest(http.MethodGet, "/api/files/diff?path=/home/user/proj/main.go&from=1&to=2", nil)
 	w3 := httptest.NewRecorder()
 	h.HandleDiff(w3, req3)
 
@@ -315,7 +315,7 @@ func TestRouterRestoreRoute(t *testing.T) {
 	h.HandleSnapshot(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
 
-	req2 := httptest.NewRequest(http.MethodGet, "/api/files//home/user/proj/main.go/restore/1", nil)
+	req2 := httptest.NewRequest(http.MethodGet, "/api/files/restore?path=/home/user/proj/main.go&version=1", nil)
 	w2 := httptest.NewRecorder()
 	h.HandleRestore(w2, req2)
 
@@ -337,7 +337,7 @@ func TestHandleFileSubRoutes_Versions(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 
 	// GET versions through router
-	req2 := httptest.NewRequest(http.MethodGet, "/api/files/home/user/proj/main.go/versions", nil)
+	req2 := httptest.NewRequest(http.MethodGet, "/api/files/versions?path=/home/user/proj/main.go", nil)
 	w2 := httptest.NewRecorder()
 	router.ServeHTTP(w2, req2)
 	require.Equal(t, http.StatusOK, w2.Code)
@@ -351,7 +351,7 @@ func TestHandleFileSubRoutes_Versions_WrongMethod(t *testing.T) {
 	router := setupRouter(t)
 	createProjectViaRouter(t, router)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/files/test.go/versions", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/files/versions", nil)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	require.Equal(t, http.StatusMethodNotAllowed, w.Code)
@@ -370,7 +370,7 @@ func TestHandleFileSubRoutes_Restore(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 
 	// Restore through router
-	req2 := httptest.NewRequest(http.MethodGet, "/api/files/home/user/proj/main.go/restore/1", nil)
+	req2 := httptest.NewRequest(http.MethodGet, "/api/files/restore?path=/home/user/proj/main.go&version=1", nil)
 	w2 := httptest.NewRecorder()
 	router.ServeHTTP(w2, req2)
 	require.Equal(t, http.StatusOK, w2.Code)
@@ -384,7 +384,7 @@ func TestHandleFileSubRoutes_Restore_WrongMethod(t *testing.T) {
 	router := setupRouter(t)
 	createProjectViaRouter(t, router)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/files/test.go/restore/1", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/files/restore?path=/home/user/proj/main.go&version=1", nil)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	require.Equal(t, http.StatusMethodNotAllowed, w.Code)
@@ -410,7 +410,7 @@ func TestHandleFileSubRoutes_Diff(t *testing.T) {
 	require.Equal(t, http.StatusOK, w2.Code)
 
 	// Diff through router
-	req3 := httptest.NewRequest(http.MethodGet, "/api/files/home/user/proj/main.go/diff?from=1&to=2", nil)
+	req3 := httptest.NewRequest(http.MethodGet, "/api/files/diff?path=/home/user/proj/main.go&from=1&to=2", nil)
 	w3 := httptest.NewRecorder()
 	router.ServeHTTP(w3, req3)
 	require.Equal(t, http.StatusOK, w3.Code)
@@ -424,7 +424,7 @@ func TestHandleFileSubRoutes_Diff_WrongMethod(t *testing.T) {
 	router := setupRouter(t)
 	createProjectViaRouter(t, router)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/files/test.go/diff?from=1&to=2", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/files/diff?path=/home/user/proj/main.go&from=1&to=2", nil)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	require.Equal(t, http.StatusMethodNotAllowed, w.Code)

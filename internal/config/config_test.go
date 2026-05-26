@@ -109,28 +109,4 @@ token: "test"
 	assert.Equal(t, Defaults(), cfg)
 }
 
-func TestFindConfig_EmptyString(t *testing.T) {
-	path, err := FindConfig("")
 
-	assert.NoError(t, err)
-	cwd, err := os.Getwd()
-	assert.NoError(t, err)
-	expected := filepath.Join(cwd, "config.yaml")
-	assert.Equal(t, expected, path)
-}
-
-func TestFindConfig_RelativePath(t *testing.T) {
-	path, err := FindConfig("relative/path/config.yaml")
-
-	assert.NoError(t, err)
-	assert.True(t, filepath.IsAbs(path))
-	assert.Contains(t, path, "relative/path/config.yaml")
-}
-
-func TestFindConfig_AbsolutePath(t *testing.T) {
-	absPath := "/absolute/path/config.yaml"
-	path, err := FindConfig(absPath)
-
-	assert.NoError(t, err)
-	assert.Equal(t, absPath, path)
-}

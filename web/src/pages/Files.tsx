@@ -24,13 +24,16 @@ export default function Files() {
 
   useEffect(() => {
     if (!projectName) return;
-    apiJSON<{ files: File[] }>(`/api/files?project=${encodeURIComponent(projectName)}`)
+    const abort = new AbortController();
+    apiJSON<{ files: File[] }>(`/api/files?project=${encodeURIComponent(projectName)}`, { signal: abort.signal })
       .then((data) => setFiles(data.files))
       .catch((err) => {
+        if (abort.signal.aborted) return;
         toast.error(err instanceof Error ? err.message : t("files.failed_to_load"));
       })
       .finally(() => setLoading(false));
-  }, [projectName]);
+    return () => abort.abort();
+  }, [projectName, t]);
 
   if (loading) {
     return (

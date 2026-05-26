@@ -4,7 +4,6 @@ package config
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"gopkg.in/yaml.v3"
 )
@@ -76,27 +75,4 @@ func Load(path string) (Config, error) {
 	}
 
 	return cfg, nil
-}
-
-// FindConfig 根据命令行 -c 参数查找配置文件。
-// 如果指定了路径则使用指定路径；否则在当前工作目录查找 config.yaml。
-func FindConfig(flagValue string) (string, error) {
-	if flagValue != "" {
-		// 如果是相对路径，转换为绝对路径
-		if !filepath.IsAbs(flagValue) {
-			abs, err := filepath.Abs(flagValue)
-			if err != nil {
-				return "", fmt.Errorf("resolve config path: %w", err)
-			}
-			return abs, nil
-		}
-		return flagValue, nil
-	}
-
-	// 默认在当前工作目录查找
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "", fmt.Errorf("get working directory: %w", err)
-	}
-	return filepath.Join(cwd, "config.yaml"), nil
 }

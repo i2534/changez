@@ -16,19 +16,22 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    const abort = new AbortController();
     Promise.all([
-      apiJSON<Stats>("/api/stats"),
-      apiJSON<ActivityResponse>("/api/recent-activity?limit=20"),
+      apiJSON<Stats>("/api/stats", { signal: abort.signal }),
+      apiJSON<ActivityResponse>("/api/recent-activity?limit=20", { signal: abort.signal }),
     ])
       .then(([statsData, activityData]) => {
         setStats(statsData);
         setActivity(activityData.activity);
       })
       .catch((err) => {
+        if (abort.signal.aborted) return;
         toast.error(err instanceof Error ? err.message : t("dashboard.failed_to_load"));
       })
       .finally(() => setLoading(false));
-  }, []);
+    return () => abort.abort();
+  }, [t]);
 
   if (loading) {
     return <LoadingSkeleton />;

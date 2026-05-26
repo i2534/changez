@@ -137,8 +137,10 @@ func (h *Handler) rebuildFromDeltaChain(ctx context.Context, ver map[string]any)
 
 	var steps []deltaStep
 	currentVer := ver
-
-	for {
+	for depth := 0; depth < 1000; depth++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		switch currentVer["storageMode"].(string) {
 		case "blob":
 			hash, ok := asStringPtr(currentVer["blobHash"])
@@ -182,6 +184,7 @@ func (h *Handler) rebuildFromDeltaChain(ctx context.Context, ver map[string]any)
 			return nil, fmt.Errorf("不支持的存储模式: %s", currentVer["storageMode"].(string))
 		}
 	}
+	return nil, fmt.Errorf("delta 链过长，超过最大深度 1000")
 }
 
 // applyPatch 对内容应用 go-diff 的 []Diff（PatchApply）。
@@ -300,7 +303,10 @@ func (h *Handler) updateLatestSnapshotCache(results []SnapshotResult) {
 		}
 	}
 
-	pathToRoot := h.DB.ResolvePathsToProjects(context.Background(), paths)
+	pathToRoot, err := h.DB.ResolvePathsToProjects(context.Background(), paths)
+	if err != nil {
+		slog.Error("resolve paths to projects failed", "error", err)
+	}
 
 	for _, fr := range results {
 		rootPath, ok := pathToRoot[fr.Path]

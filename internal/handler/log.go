@@ -138,7 +138,9 @@ func (h *Handler) doLog(ctx context.Context, path string, sourceID *int64, actio
 
 		if v["storageMode"].(string) == "delta" {
 			meta, err := h.readDeltaMeta(ctx, fileID, v["versionId"].(int64))
-			if err == nil && meta != nil {
+			if err != nil {
+				h.Logger.Warn("failed to read delta meta", "version_id", v["versionId"].(int64), "error", err)
+			} else if meta != nil {
 				entry.SessionID = meta.SessionID
 				entry.Model = meta.Model
 				entry.Message = meta.Message
