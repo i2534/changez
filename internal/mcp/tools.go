@@ -26,7 +26,7 @@ func toolError(msg string) (*mcp.CallToolResult, error) {
 func NewSnapshotTool(h *handler.Handler) (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
 	tool := mcp.NewTool("changez_snapshot",
 		mcp.WithDescription("Capture a snapshot of file changes. Upload file contents for version tracking."),
-		mcp.WithString("source", mcp.Required(), mcp.Description("Source of the change"), mcp.Enum("opencode", "claude-code", "cursor", "human")),
+		mcp.WithString("source", mcp.Required(), mcp.Description("Source of the change (e.g. opencode, claudecode, cursor, human)")),
 		mcp.WithString("sessionId", mcp.Description("Session ID")),
 		mcp.WithString("model", mcp.Description("Model name")),
 		mcp.WithString("files", mcp.Required(), mcp.Description("JSON array of files")),
@@ -63,7 +63,7 @@ func NewLogTool(h *handler.Handler) (mcp.Tool, func(context.Context, mcp.CallToo
 		mcp.WithString("path", mcp.Required(), mcp.Description("Absolute path of the file")),
 		mcp.WithString("since", mcp.Description("Start time (ISO 8601)")),
 		mcp.WithString("until", mcp.Description("End time (ISO 8601)")),
-		mcp.WithString("source", mcp.Description("Filter by source"), mcp.Enum("opencode", "claude-code", "cursor", "human")),
+		mcp.WithString("source", mcp.Description("Filter by source (e.g. opencode, claudecode, cursor, human)")),
 		mcp.WithString("action", mcp.Description("Filter by action"), mcp.Enum("create", "update", "delete")),
 		mcp.WithNumber("limit", mcp.Description("Max results (default 20)")),
 		mcp.WithNumber("offset", mcp.Description("Result offset (default 0)")),

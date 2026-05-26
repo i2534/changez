@@ -32,11 +32,9 @@ func setupMCPHandler(t *testing.T) *handler.Handler {
 	require.NoError(t, ds.EnsureDir())
 
 	cfg := config.Defaults()
-	sourceIDs, err := database.LoadSourceNameToID(context.Background())
-	require.NoError(t, err)
 
 	fileMuMap := &sync.Map{}
-	h := handler.NewHandler(database, bs, ds, &cfg, sourceIDs, handler.NewLogger(&cfg).Logger, fileMuMap)
+	h := handler.NewHandler(database, bs, ds, &cfg, handler.NewLogger(&cfg).Logger, fileMuMap)
 	return h
 }
 

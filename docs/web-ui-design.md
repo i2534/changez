@@ -13,7 +13,7 @@
 | **Project** | id, name, root_path, extra, is_deleted |
 | **File** | id, project_id, path, latest_version_id |
 | **Version** | id, file_id, storage_mode(blob/delta/delete), action, source_id, changed_at |
-| **Source** | opencode, claude-code, cursor, human |
+| **Source** | opencode, claudecode, cursor, human |
 
 ### 现有 REST API
 
@@ -60,7 +60,7 @@ Changez Web UI
 │  │  变更来源分布                                           │ │
 │  │                                                         │ │
 │  │  [████████] opencode    1,240                           │ │
-│  │  [███████ ] claude-code  890                            │ │
+│  │  [███████ ] claudecode  890                            │ │
 │  │  [██████  ] cursor       520                            │ │
 │  │  [█       ] human         41                            │ │
 │  └────────────────────────────────────────────────────────┘ │
@@ -69,7 +69,7 @@ Changez Web UI
 │  │  最近变更 (Recent Activity)                               │   │
 │  │                                                          │   │
 │  │  2 min ago  [opencode]  update   src/api/routes.ts       │   │
-│  │  5 min ago  [claude-code] update  internal/db/db.go      │   │
+│  │  5 min ago  [claudecode] update  internal/db/db.go      │   │
 │  │  12 min ago [cursor]    update   client/app.tsx          │   │
 │  │  18 min ago [human]     update   config.yaml             │   │
 │  │  25 min ago [opencode]  delete   temp/test.old           │   │
@@ -175,7 +175,7 @@ Changez Web UI
 │  ├──● v88  [opencode]  update  ·  2025-05-20 14:28:05          │
 │  │   Session: ses_abc123  ·  Model: Qwen3.6                    │
 │  │                                                              │
-│  ├──● v87  [claude-code] update  ·  2025-05-20 13:15:22        │
+│  ├──● v87  [claudecode] update  ·  2025-05-20 13:15:22        │
 │  │                                                              │
 │  ├──● v86  [human]     update  ·  2025-05-20 11:42:00          │
 │  │                                                              │
@@ -195,7 +195,7 @@ Changez Web UI
 - **垂直时间线**：每个版本一个节点，带来源图标
 - 来源用不同颜色区分：
   - `opencode` → 蓝色
-  - `claude-code` → 绿色
+  - `claudecode` → 绿色
   - `cursor` → 黄色
   - `human` → 灰色
 - Action 区分：`update` 用实心圆 ●，`delete` 用实心方块 ■

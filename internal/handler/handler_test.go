@@ -30,11 +30,9 @@ func setupTest(t *testing.T) (*Handler, *db.DB, *storage.BlobStore, *storage.Del
 	require.NoError(t, ds.EnsureDir())
 
 	cfg := config.Defaults()
-	sourceIDs, err := database.LoadSourceNameToID(context.Background())
-	require.NoError(t, err)
 
 	fileMuMap := &sync.Map{}
-	h := NewHandler(database, bs, ds, &cfg, sourceIDs, NewLogger(&cfg).Logger, fileMuMap)
+	h := NewHandler(database, bs, ds, &cfg, NewLogger(&cfg).Logger, fileMuMap)
 
 	return h, database, bs, ds
 }
@@ -224,19 +222,6 @@ func TestSnapshot_Delta(t *testing.T) {
 	require.Equal(t, 1, resp.Summary.Captured)
 }
 
-func TestSnapshot_InvalidSource(t *testing.T) {
-	h, _, _, _ := setupTest(t)
-	createProject(t, h)
-
-	body := `{"source":"invalid","files":[{"path":"/home/user/proj/main.go","content":"test"}]}`
-	req := httptest.NewRequest(http.MethodPost, "/api/snapshot", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	h.HandleSnapshot(w, req)
-
-	require.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 func TestSnapshot_EmptyFiles(t *testing.T) {
 	h, _, _, _ := setupTest(t)
@@ -538,16 +523,6 @@ func TestStats(t *testing.T) {
 
 // ========== ProcessSnapshot Tests ==========
 
-func TestProcessSnapshot_UnsupportedSource(t *testing.T) {
-	h, _, _, _ := setupTest(t)
-
-	req := &SnapshotRequest{Source: "invalid", Files: []SnapshotFile{{Path: "/test.go", Content: "test"}}}
-	results := h.ProcessSnapshot(context.Background(), req)
-
-	require.Len(t, results, 1)
-	assert.Equal(t, "error", results[0].Status)
-	assert.Contains(t, results[0].Reason, "source")
-}
 
 func TestProcessSnapshot_EmptyFiles(t *testing.T) {
 	h, _, _, _ := setupTest(t)

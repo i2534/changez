@@ -796,7 +796,7 @@ main().catch(e => console.error(`[changez] report.ts error: ${e}`));
 4. **edits 字段 ≠ 完整文件内容**：`edits` 是 diff 片段数组（old_string/new_string 对），不包含完整文件内容。文件内容必须从文件系统读取（`fs.readFile`），与 OpenCode 插件的 `fs.readFileSync` 策略一致。
 5. **Shell 命令文件变更难以捕获**：`afterShellExecution` 提供命令和输出文本，但不直接告知哪些文件被修改。需要解析命令（如 `echo >> file`、`sed -i`、`cat > file`）来推断，难度高且容易误判。
 6. **session_id 传递依赖 env 机制**：`afterFileEdit` 输入中的 `conversation_id` 等同于 `sessionStart` 的 `session_id`（Cursor 文档确认），但字段名不同。脚本中需做映射（`conversation_id` → `sessionId`）。`sessionStart` 返回的 `env` 是否能可靠传递到后续 hook 进程环境，需实机验证。
-7. **source 名称必须匹配服务端预注册列表**：服务端 `seedSources()` 硬编码 `{"opencode", "claude-code", "cursor", "human"}`，未注册的 source 会返回 400。必须使用 `"cursor"`。
+7. **source 名称必须匹配服务端预注册列表**：服务端 `seedSources()` 硬编码 `{"opencode", "claudecode", "cursor", "human"}`，未注册的 source 会返回 400。必须使用 `"cursor"`。
 8. **Bun 运行时依赖**：TypeScript 脚本需要 Bun 运行时。用户需提前安装 Bun（`curl -fsSL https://bun.sh/install | bash`）。这是相比 Shell 脚本的额外依赖。
 9. **退出码语义**：非 before/permission 类钩子（如 afterFileEdit）的输出不会被 Cursor 强制执行，属于 fire-and-forget。
 10. **loop_limit**：`stop`/`subagentStop` 的 followup_message 默认限制 5 次循环。

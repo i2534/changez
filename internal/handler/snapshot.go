@@ -57,10 +57,8 @@ func (h *Handler) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, ok := h.SourceIDs[req.Source]; !ok {
-		h.Logger.Warn("snapshot invalid source", "source", req.Source)
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", fmt.Sprintf("不支持的 source: %s", req.Source))
-		return
+	if req.Source == "" {
+		req.Source = "unknown"
 	}
 
 	if len(req.Files) == 0 {

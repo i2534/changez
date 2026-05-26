@@ -136,7 +136,7 @@ CREATE TABLE sources (
 );
 ```
 
-服务启动时自动插入：opencode, claude-code, cursor, human。如果已存在则跳过。
+服务启动时自动插入：opencode, claudecode, cursor, human。如果已存在则跳过。
 
 ## Blob 文件格式
 
@@ -256,7 +256,7 @@ Go `sync.Map` of `*sync.RWMutex`，粒度小，不影响不同文件的并发。
   "inputSchema": {
     "type": "object",
     "properties": {
-      "source":   { "type": "string", "enum": ["opencode", "claude-code", "cursor", "human"] },
+      "source":   { "type": "string", "enum": ["opencode", "claudecode", "cursor", "human"] },
       "sessionId": { "type": "string" },
       "model":     { "type": "string" },
       "files": {
@@ -329,7 +329,7 @@ Go `sync.Map` of `*sync.RWMutex`，粒度小，不影响不同文件的并发。
       "path":     { "type": "string" },
       "since":    { "type": "string", "format": "date-time" },
       "until":    { "type": "string", "format": "date-time" },
-      "source":   { "type": "string", "enum": ["opencode", "claude-code", "cursor", "human"] },
+      "source":   { "type": "string", "enum": ["opencode", "claudecode", "cursor", "human"] },
       "action":   { "type": "string", "enum": ["create", "update", "delete"] },
       "limit":    { "type": "integer", "default": 20 },
       "offset":   { "type": "integer", "default": 0 }

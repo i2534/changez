@@ -3,6 +3,7 @@ package router
 import (
 	"embed"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -23,14 +24,13 @@ func New(
 	blobStore *storage.BlobStore,
 	deltaStore *storage.DeltaStore,
 	cfg *config.Config,
-	sourceIDs map[string]int64,
 	token string,
 	fileMuMap *sync.Map,
 	compactor *compact.Compactor,
 	logger *slog.Logger,
 	webFS *embed.FS,
 ) http.Handler {
-	h := handler.NewHandler(database, blobStore, deltaStore, cfg, sourceIDs, logger, fileMuMap)
+	h := handler.NewHandler(database, blobStore, deltaStore, cfg, logger, fileMuMap)
 	h.Compact = compactor
 
 	mux := http.NewServeMux()
@@ -104,6 +104,18 @@ func New(
 	apiMux.HandleFunc("/api/stats", h.HandleStats)
 	apiMux.HandleFunc("/api/snapshots/latest", h.HandleLatestSnapshot)
 	apiMux.HandleFunc("/api/recent-activity", h.HandleRecentActivity)
+	apiMux.HandleFunc("/api/sources", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "仅支持 GET")
+			return
+		}
+		sources, err := h.DB.ListSources(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", fmt.Sprintf("查询 sources 失败: %v", err))
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"sources": sources})
+	})
 
 	mux.Handle("/api/", authMiddleware(loggingMiddleware(apiMux, h.Logger), token))
 

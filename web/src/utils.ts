@@ -23,7 +23,7 @@ export function relativeTime(dateStr: string, t?: (key: string, vars?: any) => s
 export function sourceColor(source: string): string {
   const map: Record<string, string> = {
     opencode: "bg-blue-500",
-    "claude-code": "bg-green-500",
+    "claudecode": "bg-green-500",
     cursor: "bg-yellow-500",
     human: "bg-gray-400",
   };

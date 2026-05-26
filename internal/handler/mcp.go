@@ -11,9 +11,9 @@ import (
 
 // ProcessSnapshot 处理快照请求（共享核心逻辑，被 HandleSnapshot 和 MCP 调用）。
 func (h *Handler) ProcessSnapshot(ctx context.Context, req *SnapshotRequest) []SnapshotResult {
-	sourceID, ok := h.SourceIDs[req.Source]
-	if !ok {
-		return []SnapshotResult{{Path: "", Status: "error", Reason: fmt.Sprintf("不支持的 source: %s", req.Source)}}
+	sourceID, err := h.DB.GetOrCreateSourceID(ctx, req.Source)
+	if err != nil {
+		return []SnapshotResult{{Path: "", Status: "error", Reason: fmt.Sprintf("source 处理失败: %v", err)}}
 	}
 
 	if len(req.Files) == 0 {

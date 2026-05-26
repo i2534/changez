@@ -276,10 +276,10 @@ async function processHook(hook) {
 
 ```bash
 # 前台运行
-node client/claude-code/changez-daemon.js
+node client/claudecode/changez-daemon.js
 
 # 后台运行
-nohup node client/claude-code/changez-daemon.js &
+nohup node client/claudecode/changez-daemon.js &
 ```
 
 ### 方式 2：systemd 服务

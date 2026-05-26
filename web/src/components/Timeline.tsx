@@ -1,10 +1,19 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { relativeTime, sourceColor, actionIcon } from "../utils";
+import { apiJSON } from "../api/client";
 import { VersionEntry } from "../api/types";
 
-const ALL_SOURCES = ["opencode", "claude-code", "cursor", "human"];
 const ALL_ACTIONS = ["create", "update", "delete"];
+
+interface SourceInfo {
+  name: string;
+  version_count: number;
+}
+
+interface SourcesResponse {
+  sources: SourceInfo[];
+}
 
 export default function Timeline({
   entries,
@@ -20,7 +29,15 @@ export default function Timeline({
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [sourceFilter, setSourceFilter] = useState<string>("");
   const [actionFilter, setActionFilter] = useState<string>("");
+  const [sources, setSources] = useState<string[]>([]);
   const { t } = useTranslation();
+
+  useEffect(() => {
+    apiJSON<SourcesResponse>("/api/sources").then(
+      (res) => setSources(res.sources.map((s) => s.name)),
+      () => setSources([])
+    );
+  }, []);
 
   const filtered = useMemo(() => {
     if (!sourceFilter && !actionFilter) return entries;
@@ -42,7 +59,7 @@ export default function Timeline({
           className="rounded border border-gray-600 bg-gray-700 px-2 py-1 text-sm text-gray-200 focus:border-blue-500 focus:outline-none"
         >
           <option value="">{t("timeline.all_sources")}</option>
-          {ALL_SOURCES.map((s) => (
+          {sources.map((s) => (
             <option key={s} value={s}>
               {s}
             </option>

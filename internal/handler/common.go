@@ -25,7 +25,6 @@ type Handler struct {
 	BlobStore  *storage.BlobStore
 	DeltaStore *storage.DeltaStore
 	Config     *config.Config
-	SourceIDs  map[string]int64
 	Compact    *compact.Compactor
 	Logger     *slog.Logger
 	fileMuMap  *sync.Map
@@ -50,13 +49,12 @@ func (h *Handler) getFileLock(fileID int64) *sync.RWMutex {
 	return mu.(*sync.RWMutex)
 }
 
-func NewHandler(database *db.DB, bs *storage.BlobStore, ds *storage.DeltaStore, cfg *config.Config, sourceIDs map[string]int64, logger *slog.Logger, fileMuMap *sync.Map) *Handler {
+func NewHandler(database *db.DB, bs *storage.BlobStore, ds *storage.DeltaStore, cfg *config.Config, logger *slog.Logger, fileMuMap *sync.Map) *Handler {
 	return &Handler{
 		DB:         database,
 		BlobStore:  bs,
 		DeltaStore: ds,
 		Config:     cfg,
-		SourceIDs:  sourceIDs,
 		fileMuMap:  fileMuMap,
 		Logger:     logger,
 	}

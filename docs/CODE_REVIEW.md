@@ -11,12 +11,12 @@
 
 | # | 优先级 | 问题 | 最终状态 |
 |---|--------|------|----------|
-| 1 | ~~P0~~ | claude-code hook 上报"旧"内容 | **误判，已撤销**——`originalFile` 实机验证为"编辑后"内容；已加注释 |
+| 1 | ~~P0~~ | claudecode hook 上报"旧"内容 | **误判，已撤销**——`originalFile` 实机验证为"编辑后"内容；已加注释 |
 | 2 | P0 | `dbcheck` 路径错误 | ✅ 已修复 |
 | 3 | P1 | `router.writeError` 错误格式与文档不符 | ✅ 已修复（嵌套 `error` 对象） |
 | 4 | P1 | `baseID` typed-nil 陷阱（多处） | ✅ 已修复（统一通过 `dbutil.AsInt64Ptr / AsStringPtr`） |
 | 5 | P2 | `storage_mode` 文档不一致 | ✅ 已修复 |
-| 6 | P2 | claude-code 设计文档与实现分叉 | ✅ 已大幅同步 |
+| 6 | P2 | claudecode 设计文档与实现分叉 | ✅ 已大幅同步 |
 | 7 | P3 | `snapshot.go` 冗余 hash 检查 + 变量遮蔽 | ✅ 已修复（switch 分支重构） |
 | 8 | P3 | `delta.go` metaHeader 死代码 | ✅ 已删 |
 | 9 | P3 | URL 路径解析重复（`extractPathFromURL` / `parseRestorePath`） | ⚪ 暂未处理（不阻塞） |
@@ -28,9 +28,9 @@
 
 ## 关键修复回顾
 
-### 1. claude-code hook 的 `originalFile` 字段语义（误判勘误）
+### 1. claudecode hook 的 `originalFile` 字段语义（误判勘误）
 
-实机验证表明 Edit 工具的 `tool_response.originalFile` 实际携带的是**编辑后**的完整文件内容（命名反直觉）。原 review 中根据字段名做出的"上报旧内容"判断不成立。已在 `client/claude-code/changez-hook.js` 加上 inline 注释，避免后人再次误读：
+实机验证表明 Edit 工具的 `tool_response.originalFile` 实际携带的是**编辑后**的完整文件内容（命名反直觉）。原 review 中根据字段名做出的"上报旧内容"判断不成立。已在 `client/claudecode/changez-hook.js` 加上 inline 注释，避免后人再次误读：
 
 ```javascript
 // 注意：Edit 工具的 `originalFile` 字段命名反直觉——实机验证里它装的是

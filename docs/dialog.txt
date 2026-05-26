@@ -1528,7 +1528,7 @@ a/workspace/go/ai-audit/design.md → b/workspace/go/ai-audit/design.md
     CREATE TABLE sessions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         session_key TEXT UNIQUE NOT NULL,  -- 客户端传入的 sessionId
-        source TEXT NOT NULL,              -- 'opencode', 'claude-code' 等
+        source TEXT NOT NULL,              -- 'opencode', 'claudecode' 等
         first_seen TIMESTAMP,
         last_seen TIMESTAMP
     );
@@ -2148,7 +2148,7 @@ a/workspace/go/ai-audit/design.md → b/workspace/go/ai-audit/design.md
 
     3. source 字段
 
-    目前存文本 'opencode' / 'claude-code' / 'cursor' / 'human'。要不要独立成 sources 表用 ID 引用？还是文本就行？
+    目前存文本 'opencode' / 'claudecode' / 'cursor' / 'human'。要不要独立成 sources 表用 ID 引用？还是文本就行？
 
     4. compact 时 base_id 怎么处理？
 
@@ -2195,14 +2195,14 @@ a/workspace/go/ai-audit/design.md → b/workspace/go/ai-audit/design.md
     sql
     CREATE TABLE sources (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT UNIQUE NOT NULL,        -- 'opencode', 'claude-code', 'cursor', 'human'
+        name TEXT UNIQUE NOT NULL,        -- 'opencode', 'claudecode', 'cursor', 'human'
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
 
     versions 表改 source TEXT → source_id INTEGER FK。
 
-    预置记录： 服务启动时自动插入 4 条（opencode, claude-code, cursor, human），如果已存在则跳过。
+    预置记录： 服务启动时自动插入 4 条（opencode, claudecode, cursor, human），如果已存在则跳过。
 
 
 
@@ -2505,7 +2505,7 @@ a/workspace/go/ai-audit/design.md → b/workspace/go/ai-audit/design.md
     还原历史时：
 
 
-    v1 (human)  → v2 delta (opencode, +15行) → v3 delta (claude-code, -3行) → v4 delta (cursor, +8行)
+    v1 (human)  → v2 delta (opencode, +15行) → v3 delta (claudecode, -3行) → v4 delta (cursor, +8行)
 
 
     每条 delta 对应一个 version 记录，source 清清楚楚。log 查询直接展示每个变更是谁干的。
@@ -2540,7 +2540,7 @@ a/workspace/go/ai-audit/design.md → b/workspace/go/ai-audit/design.md
     changez log main.go
       v4  cursor     +8行  09:30
       v3  opencode   +15行 09:25
-      v2  claude-code -3行  09:20
+      v2  claudecode -3行  09:20
       v1  human      (base)
 
     "我只想回退 cursor 的改动" → restore to v3
@@ -2563,7 +2563,7 @@ a/workspace/go/ai-audit/design.md → b/workspace/go/ai-audit/design.md
     Cherry-pick = 挑选性恢复。 从历史中挑几个版本的改动应用，跳过其他的。
 
 
-    历史: v1(base) → v2(opencode) → v3(claude-code) → v4(cursor)
+    历史: v1(base) → v2(opencode) → v3(claudecode) → v4(cursor)
 
     普通 restore: 回到 v3 = 应用 v2+v3 的改动
     Cherry-pick:  只要 opencode 和 cursor = 应用 v2+v4，跳过 v3
@@ -2654,7 +2654,7 @@ a/workspace/go/ai-audit/design.md → b/workspace/go/ai-audit/design.md
        - CREATE TABLE IF NOT EXISTS (4 张表)
        - 创建索引
     5. 预置 sources 数据
-       - INSERT OR IGNORE: opencode, claude-code, cursor, human
+       - INSERT OR IGNORE: opencode, claudecode, cursor, human
     6. 检查/创建存储目录 (blobs/, deltas/)
     7. 启动 compact 定时器
     8. 启动 HTTP server (含 MCP SSE endpoint)
@@ -2756,7 +2756,7 @@ a/workspace/go/ai-audit/design.md → b/workspace/go/ai-audit/design.md
         "properties": {
           "source": {
             "type": "string",
-            "enum": ["opencode", "claude-code", "cursor", "human"],
+            "enum": ["opencode", "claudecode", "cursor", "human"],
             "description": "Source of the change"
           },
           "sessionId": {
@@ -2832,7 +2832,7 @@ a/workspace/go/ai-audit/design.md → b/workspace/go/ai-audit/design.md
           },
           "source": {
             "type": "string",
-            "enum": ["opencode", "claude-code", "cursor", "human"],
+            "enum": ["opencode", "claudecode", "cursor", "human"],
             "description": "Filter by source"
           },
           "limit": {
@@ -2975,7 +2975,7 @@ a/workspace/go/ai-audit/design.md → b/workspace/go/ai-audit/design.md
       "inputSchema": {
         "type": "object",
         "properties": {
-          "source": { "type": "string", "enum": ["opencode", "claude-code", "cursor", "human"] },
+          "source": { "type": "string", "enum": ["opencode", "claudecode", "cursor", "human"] },
           "sessionId": { "type": "string" },
           "files": {
             "type": "array",
@@ -3073,7 +3073,7 @@ a/workspace/go/ai-audit/design.md → b/workspace/go/ai-audit/design.md
           "path":     { "type": "string" },
           "since":    { "type": "string", "format": "date-time" },
           "until":    { "type": "string", "format": "date-time" },
-          "source":   { "type": "string", "enum": ["opencode", "claude-code", "cursor", "human"] },
+          "source":   { "type": "string", "enum": ["opencode", "claudecode", "cursor", "human"] },
           "limit":    { "type": "integer", "default": 20 }
         },
         "required": ["path"]
@@ -3182,7 +3182,7 @@ a/workspace/go/ai-audit/design.md → b/workspace/go/ai-audit/design.md
     CREATE TABLE sessions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         key TEXT UNIQUE NOT NULL,          -- 客户端传入的 sessionId
-        source TEXT NOT NULL,              -- 'opencode', 'claude-code' 等
+        source TEXT NOT NULL,              -- 'opencode', 'claudecode' 等
         model TEXT,                        -- 'deepseek-v4-flash', 'claude-sonnet-4' 等
         extra TEXT DEFAULT '{}',           -- JSON，备用扩展
         first_seen TIMESTAMP,
@@ -3442,7 +3442,7 @@ a/workspace/go/ai-audit/design.md → b/workspace/go/ai-audit/design.md
           "path":     { "type": "string" },
           "since":    { "type": "string", "format": "date-time" },
           "until":    { "type": "string", "format": "date-time" },
-          "source":   { "type": "string", "enum": ["opencode", "claude-code", "cursor", "human"] },
+          "source":   { "type": "string", "enum": ["opencode", "claudecode", "cursor", "human"] },
           "limit":    { "type": "integer", "default": 20 }
         },
         "required": ["path"]
@@ -3486,7 +3486,7 @@ a/workspace/go/ai-audit/design.md → b/workspace/go/ai-audit/design.md
           "path":     { "type": "string" },
           "since":    { "type": "string", "format": "date-time" },
           "until":    { "type": "string", "format": "date-time" },
-          "source":   { "type": "string", "enum": ["opencode", "claude-code", "cursor", "human"] },
+          "source":   { "type": "string", "enum": ["opencode", "claudecode", "cursor", "human"] },
           "action":   { "type": "string", "enum": ["create", "edit", "delete"] },
           "limit":    { "type": "integer", "default": 20 },
           "offset":   { "type": "integer", "default": 0 }
@@ -3616,7 +3616,7 @@ a/workspace/changez/DESIGN.md → b/workspace/changez/DESIGN.md
 +  file_path    TEXT NOT NULL,
 +  delta_id     INTEGER NOT NULL REFERENCES deltas(id),
 +  hash         TEXT,                           -- SHA256 of reconstructed full content
-+  source       TEXT,                           -- opencode | claude-code | cursor | human
++  source       TEXT,                           -- opencode | claudecode | cursor | human
 +  session_id   TEXT,
 +  message      TEXT,                           -- commit message（snapshot 时传入）
 +  created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
@@ -3669,7 +3669,7 @@ a/workspace/changez/DISCUSSION.md → b/workspace/changez/DISCUSSION.md
 +**versions 表：**
 +- 索引层，关联 delta_id
 +- `hash`: 重建后完整内容的 SHA256
-+- `source`: 来源标记（opencode/claude-code/cursor/human）
++- `source`: 来源标记（opencode/claudecode/cursor/human）
 +- `session_id`: 会话关联
 +- `message`: commit message
 +- 用户明确拒绝在 versions 加 `size_bytes` 字段
@@ -3780,7 +3780,7 @@ a/workspace/changez/DISCUSSION.md → b/workspace/changez/DISCUSSION.md
 -**versions 表：**
 -- 索引层，关联 delta_id
 -- `hash`: 重建后完整内容的 SHA256
--- `source`: 来源标记（opencode/claude-code/cursor/human）
+-- `source`: 来源标记（opencode/claudecode/cursor/human）
 -- `session_id`: 会话关联
 -- `message`: commit message
 -- 用户明确拒绝在 versions 加 `size_bytes` 字段
@@ -4091,7 +4091,7 @@ a/workspace/go/changez/DISCUSSION.md → b/workspace/go/changez/DISCUSSION.md
 +**讨论要点:**
 +- 索引层，关联 delta_id
 +- hash: 重建后完整内容的 SHA256（和 deltas.hash 区分）
-+- source: 来源标记（opencode/claude-code/cursor/human）
++- source: 来源标记（opencode/claudecode/cursor/human）
 +- session_id: 会话关联
 +- message: commit message
 +- 索引：file_path + created_at
@@ -4973,7 +4973,7 @@ a//home/lan/workspace/go/changez/DESIGN.md → b//home/lan/workspace/go/changez/
         "properties": {
           "path":     { "type": "string" },
           "content":  { "type": "string" },
-          "source":   { "type": "string", "enum": ["opencode", "claude-code", "cursor", "human"] },
+          "source":   { "type": "string", "enum": ["opencode", "claudecode", "cursor", "human"] },
           "sessionId":{ "type": "string" },
           "message":  { "type": "string" }
         },
@@ -4996,7 +4996,7 @@ a//home/lan/workspace/go/changez/DESIGN.md → b//home/lan/workspace/go/changez/
      "properties": {
        "path":     { "type": "string" },
 +      "content":  { "type": "string" },
-       "source":   { "type": "string", "enum": ["opencode", "claude-code", "cursor", "human"] },
+       "source":   { "type": "string", "enum": ["opencode", "claudecode", "cursor", "human"] },
        "sessionId":{ "type": "string" },
        "message":  { "type": "string" }
      },
@@ -5294,7 +5294,7 @@ a//home/lan/workspace/go/changez/DESIGN.md → b//home/lan/workspace/go/changez/
 @@ -73,8 +73,6 @@
    delta_id     INTEGER NOT NULL REFERENCES deltas(id),
    hash         TEXT,                           -- SHA256 of reconstructed full content
-   source       TEXT,                           -- opencode | claude-code | cursor | human
+   source       TEXT,                           -- opencode | claudecode | cursor | human
 -  session_id   TEXT,
 -  message      TEXT,                           -- commit message（snapshot 时传入）
    created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))

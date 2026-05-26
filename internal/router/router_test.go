@@ -1,7 +1,6 @@
 package router
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -30,15 +29,13 @@ func setupRouter(t *testing.T) http.Handler {
 	require.NoError(t, ds.EnsureDir())
 
 	cfg := config.Defaults()
-	sourceIDs, err := database.LoadSourceNameToID(context.Background())
-	require.NoError(t, err)
 
 	fileMuMap := &sync.Map{}
 	loggerWrapper := handler.NewLogger(&cfg)
 	logger := loggerWrapper.Logger
 	compactor := compact.New(database, bs, ds, &cfg.Compact, logger, fileMuMap)
 
-	return New(database, bs, ds, &cfg, sourceIDs, "", fileMuMap, compactor, logger, nil)
+	return New(database, bs, ds, &cfg, "", fileMuMap, compactor, logger, nil)
 }
 
 func setupRouterWithToken(t *testing.T, token string) http.Handler {
@@ -55,15 +52,13 @@ func setupRouterWithToken(t *testing.T, token string) http.Handler {
 
 	cfg := config.Defaults()
 	cfg.Token = token
-	sourceIDs, err := database.LoadSourceNameToID(context.Background())
-	require.NoError(t, err)
 
 	fileMuMap := &sync.Map{}
 	loggerWrapper := handler.NewLogger(&cfg)
 	logger := loggerWrapper.Logger
 	compactor := compact.New(database, bs, ds, &cfg.Compact, logger, fileMuMap)
 
-	return New(database, bs, ds, &cfg, sourceIDs, token, fileMuMap, compactor, logger, nil)
+	return New(database, bs, ds, &cfg, token, fileMuMap, compactor, logger, nil)
 }
 
 func createProjectViaRouter(t *testing.T, router http.Handler) {
@@ -89,12 +84,10 @@ func setupHandler(t *testing.T) (*handler.Handler, *db.DB, *storage.BlobStore, *
 	require.NoError(t, ds.EnsureDir())
 
 	cfg := config.Defaults()
-	sourceIDs, err := database.LoadSourceNameToID(context.Background())
-	require.NoError(t, err)
 
 	fileMuMap := &sync.Map{}
 	loggerWrapper := handler.NewLogger(&cfg)
-	h := handler.NewHandler(database, bs, ds, &cfg, sourceIDs, loggerWrapper.Logger, fileMuMap)
+	h := handler.NewHandler(database, bs, ds, &cfg, loggerWrapper.Logger, fileMuMap)
 
 	return h, database, bs, ds
 }

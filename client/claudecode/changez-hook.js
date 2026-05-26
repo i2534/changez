@@ -16,7 +16,7 @@ const path = require("path")
 // ── 配置 ───────────────────────────────────────────────────────
 const CHANGEZ_URL        = process.env.CHANGEZ_URL        ?? "http://127.0.0.1:8760"
 const CHANGEZ_TOKEN      = process.env.CHANGEZ_TOKEN      ?? ""
-const CHANGEZ_SOURCE     = process.env.CHANGEZ_SOURCE     ?? "claude-code"
+const CHANGEZ_SOURCE     = process.env.CHANGEZ_SOURCE     ?? "claudecode"
 const CHANGEZ_LOG_FILE   = process.env.CHANGEZ_LOG_FILE   ?? ""
 const MAX_FILE_SIZE      = parseInt(process.env.CHANGEZ_MAX_FILE_SIZE ?? "10485760", 10)
 const MAX_RETRIES        = parseInt(process.env.CHANGEZ_MAX_RETRIES ?? "2", 10)

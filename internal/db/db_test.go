@@ -36,14 +36,18 @@ func TestOpen_CreatesTablesAndSeedsSources(t *testing.T) {
 	db := setupDB(t)
 
 	// 验证 sources 表有 4 条记录
-	nameToID, err := db.LoadSourceNameToID(context.Background())
+	sources, err := db.ListSources(context.Background())
 	require.NoError(t, err)
-	assert.Len(t, nameToID, 4, "should have 4 sources")
+	assert.Len(t, sources, 4, "should have 4 sources")
 
 	// 验证预期的 source 名称存在
-	expectedSources := []string{"opencode", "claude-code", "cursor", "human"}
+	sourceNames := make(map[string]bool)
+	for _, s := range sources {
+		sourceNames[s["name"].(string)] = true
+	}
+	expectedSources := []string{"opencode", "claudecode", "cursor", "human"}
 	for _, name := range expectedSources {
-		assert.Contains(t, nameToID, name, "source %q should exist", name)
+		assert.True(t, sourceNames[name], "source %q should exist", name)
 	}
 }
 
@@ -64,14 +68,18 @@ func TestClose_Works(t *testing.T) {
 func TestLoadSourceNameToID_ReturnsCorrectEntries(t *testing.T) {
 	db := setupDB(t)
 
-	nameToID, err := db.LoadSourceNameToID(context.Background())
+	sources, err := db.ListSources(context.Background())
 	require.NoError(t, err)
 
-	// 验证 4 个 source
-	assert.Equal(t, int64(1), nameToID["opencode"])
-	assert.Equal(t, int64(2), nameToID["claude-code"])
-	assert.Equal(t, int64(3), nameToID["cursor"])
-	assert.Equal(t, int64(4), nameToID["human"])
+	// 验证 4 个 source 名称存在
+	sourceNames := make(map[string]bool)
+	for _, s := range sources {
+		sourceNames[s["name"].(string)] = true
+	}
+	assert.True(t, sourceNames["opencode"])
+	assert.True(t, sourceNames["claudecode"])
+	assert.True(t, sourceNames["cursor"])
+	assert.True(t, sourceNames["human"])
 }
 
 func TestGetSourceIDByName_ReturnsCorrectIDs(t *testing.T) {
@@ -83,7 +91,7 @@ func TestGetSourceIDByName_ReturnsCorrectIDs(t *testing.T) {
 		expected int64
 	}{
 		{"opencode", "opencode", 1},
-		{"claude-code", "claude-code", 2},
+		{"claudecode", "claudecode", 2},
 		{"cursor", "cursor", 3},
 		{"human", "human", 4},
 	}
@@ -364,7 +372,7 @@ func TestListVersions_FiltersBySourceID(t *testing.T) {
 
 	// 创建不同 source 的版本
 	_, _ = db.CreateVersion(context.Background(), fileID, "blob", nil, nil, nil, "update", 1) // opencode
-	_, _ = db.CreateVersion(context.Background(), fileID, "blob", nil, nil, nil, "update", 2) // claude-code
+	_, _ = db.CreateVersion(context.Background(), fileID, "blob", nil, nil, nil, "update", 2) // claudecode
 
 	sourceID := int64(1)
 	versions, err := db.ListVersions(context.Background(), fileID, &sourceID, nil, nil, nil, 10, 0)
@@ -514,7 +522,7 @@ func TestGetStats_ReturnsCorrectCounts(t *testing.T) {
 	// 验证 sources breakdown
 	sources := stats["sources"].(map[string]int)
 	assert.Equal(t, 1, sources["opencode"])
-	assert.Equal(t, 1, sources["claude-code"])
+	assert.Equal(t, 1, sources["claudecode"])
 	assert.Equal(t, 0, sources["cursor"])
 	assert.Equal(t, 0, sources["human"])
 }
@@ -571,5 +579,5 @@ func TestQuery_ExecutesArbitraryQuery(t *testing.T) {
 		names = append(names, name)
 	}
 
-	assert.Equal(t, []string{"opencode", "claude-code", "cursor", "human"}, names)
+	assert.Equal(t, []string{"opencode", "claudecode", "cursor", "human"}, names)
 }

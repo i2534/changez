@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { checkAuthRequired, getToken, clearToken } from "../api/client";
+import { checkAuthRequired, getToken } from "../api/client";
 import LoginModal from "./LoginModal";
 
 export default function Layout({ children }: { children: React.ReactNode }) {
@@ -64,15 +64,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               className="text-sm text-gray-400 hover:text-gray-200"
             >
               {i18n.language === "zh" ? "EN" : "中文"}
-            </button>
-            <button
-              onClick={() => {
-                clearToken();
-                setLoginOpen(true);
-              }}
-              className="text-sm text-gray-400 hover:text-gray-200"
-            >
-              {t("layout.change_token")}
             </button>
           </div>
         </div>

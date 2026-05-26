@@ -47,10 +47,10 @@ func Open(dataDir string) (*DB, error) {
 		return nil, fmt.Errorf("create tables: %w", err)
 	}
 
-	// 预置 sources
-	if err := d.seedSources(); err != nil {
+	// 运行数据库迁移
+	if err := d.RunMigrations(); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("seed sources: %w", err)
+		return nil, fmt.Errorf("run migrations: %w", err)
 	}
 
 	// 启动恢复：清理崩溃遗留的 orphan 版本记录
@@ -155,17 +155,6 @@ func (d *DB) createTables() error {
 		return fmt.Errorf("create idx_versions_changed_at: %w", err)
 	}
 
-	return nil
-}
-
-// seedSources 预置四条来源记录（INSERT OR IGNORE），确保 id 固定。
-func (d *DB) seedSources() error {
-	sources := []string{"opencode", "claude-code", "cursor", "human"}
-	for _, name := range sources {
-		if _, err := d.db.Exec("INSERT OR IGNORE INTO sources (name) VALUES (?)", name); err != nil {
-			return fmt.Errorf("seed source %q: %w", name, err)
-		}
-	}
 	return nil
 }
 
@@ -597,7 +586,7 @@ func (d *DB) CountVersions(ctx context.Context, fileID int64) (int, error) {
 	return count, err
 }
 
-// GetSourceIDByName 按名称查询来源 ID。
+// GetSourceIDByName 按名称查询来源 ID。不存在返回 ErrNotFound。
 func (d *DB) GetSourceIDByName(ctx context.Context, name string) (int64, error) {
 	var id int64
 	err := d.db.QueryRowContext(ctx,
@@ -607,6 +596,50 @@ func (d *DB) GetSourceIDByName(ctx context.Context, name string) (int64, error) 
 		return 0, fmt.Errorf("source %q not found: %w", name, err)
 	}
 	return id, nil
+}
+
+// GetOrCreateSourceID 按名称查询来源 ID，不存在则自动创建。空名称统一为 "unknown"。
+func (d *DB) GetOrCreateSourceID(ctx context.Context, name string) (int64, error) {
+	if strings.TrimSpace(name) == "" {
+		name = "unknown"
+	}
+	var id int64
+	err := d.db.QueryRowContext(ctx, "SELECT id FROM sources WHERE name = ?", name).Scan(&id)
+	if err == nil {
+		return id, nil
+	}
+	result, err := d.db.ExecContext(ctx, "INSERT INTO sources (name) VALUES (?)", name)
+	if err != nil {
+		return 0, fmt.Errorf("create source %q: %w", name, err)
+	}
+	return result.LastInsertId()
+}
+
+// ListSources 查询所有来源及其版本数量。
+func (d *DB) ListSources(ctx context.Context) ([]map[string]any, error) {
+	rows, err := d.db.QueryContext(ctx, `
+		SELECT s.name, COUNT(v.id) as version_count
+		FROM sources s LEFT JOIN versions v ON s.id = v.source_id
+		GROUP BY s.id ORDER BY s.name
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("query sources: %w", err)
+	}
+	defer rows.Close()
+
+	result := make([]map[string]any, 0)
+	for rows.Next() {
+		var name string
+		var count int
+		if err := rows.Scan(&name, &count); err != nil {
+			return nil, err
+		}
+		result = append(result, map[string]any{
+			"name":          name,
+			"version_count": count,
+		})
+	}
+	return result, nil
 }
 
 // ListProjects 查询所有未删除的项目。

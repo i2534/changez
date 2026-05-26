@@ -3,7 +3,7 @@ set -euo pipefail
 
 CHANGEZ_URL="${CHANGEZ_URL:-http://127.0.0.1:8760}"
 CHANGEZ_TOKEN="${CHANGEZ_TOKEN:-}"
-HOOK_SCRIPT="${HOOK_SCRIPT:-client/claude-code/changez-hook.js}"
+HOOK_SCRIPT="${HOOK_SCRIPT:-client/claudecode/changez-hook.js}"
 TEST_LOG="/tmp/changez-hook-test-$$.log"
 TEST_PROJECT="/tmp/changez-hook-test-$$"
 
@@ -95,7 +95,7 @@ STATS=$(api_get "/api/stats")
 BASELINE_CLAUDE=0
 BASELINE_VERSIONS=0
 if [ -n "$STATS" ]; then
-    BASELINE_CLAUDE=$(echo "$STATS" | json_val "['sources'].get('claude-code',0)" "0")
+    BASELINE_CLAUDE=$(echo "$STATS" | json_val "['sources'].get('claudecode',0)" "0")
     BASELINE_VERSIONS=$(echo "$STATS" | json_val "['versions']" "0")
 fi
 
@@ -142,10 +142,10 @@ echo "--- T4: Snapshot 数据验证 ---"
 sleep 0.5
 STATS_AFTER=$(api_get "/api/stats")
 if [ -n "$STATS_AFTER" ]; then
-    CLAUDE_AFTER=$(echo "$STATS_AFTER" | json_val "['sources'].get('claude-code',0)" "0")
+    CLAUDE_AFTER=$(echo "$STATS_AFTER" | json_val "['sources'].get('claudecode',0)" "0")
     DIFF=$((CLAUDE_AFTER - BASELINE_CLAUDE))
     if [ "$DIFF" -ge 2 ]; then
-        pass "Snapshot 数据 → claude-code 新增 $DIFF 条"
+        pass "Snapshot 数据 → claudecode 新增 $DIFF 条"
     else
         fail "Snapshot 数据 → 预期 ≥2 条新增，实际 $DIFF 条"
     fi

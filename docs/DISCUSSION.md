@@ -712,7 +712,7 @@ TUI 端（`changez.tui.ts`）：
 **用户:** 调研 Claude Code / wps_claude 如何接入 changez。
 
 **调研方法:**
-1. 找到 wps_claude 安装位置：`~/.local/bin/wps_claude` → `~/.wps-claude-code/dist/cli.js`（11MB 编译产物）
+1. 找到 wps_claude 安装位置：`~/.local/bin/wps_claude` → `~/.wps-claudecode/dist/cli.js`（11MB 编译产物）
 2. 对 cli.js 进行逆向分析，发现完整 hooks 系统
 3. 确认 wps_claude 是 Claude Code 逆向恢复版本，支持 hooks 配置
 

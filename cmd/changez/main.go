@@ -45,12 +45,6 @@ func main() {
 	}
 	defer database.Close()
 
-	sourceIDs, err := database.LoadSourceNameToID(context.Background())
-	if err != nil {
-		slog.Error("load sources", "error", err)
-		os.Exit(1)
-	}
-
 	if err := database.RecoverOrphans(context.Background()); err != nil {
 		slog.Error("recover orphans", "error", err)
 		os.Exit(1)
@@ -85,7 +79,7 @@ func main() {
 	defer loggerWrapper.Close()
 	logger := loggerWrapper.Logger
 	compactor := compact.New(database, blobStore, deltaStore, &cfg.Compact, logger, fileMuMap)
-	httpRouter := router.New(database, blobStore, deltaStore, &cfg, sourceIDs, cfg.Token, fileMuMap, compactor, logger, webFS)
+	httpRouter := router.New(database, blobStore, deltaStore, &cfg, cfg.Token, fileMuMap, compactor, logger, webFS)
 
 	srv := &http.Server{
 		Addr:         cfg.Listen,

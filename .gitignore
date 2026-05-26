@@ -10,6 +10,7 @@ data/
 
 # OpenCode
 .opencode/
+/AGENTS.md
 
 # IDE
 .vscode/

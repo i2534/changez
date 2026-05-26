@@ -196,9 +196,7 @@ export default function FileList({
   searchQuery: string;
   onSearchChange: (q: string) => void;
 }) {
-  const [expanded, _setExpanded] = useState<Set<string>>(new Set());
-void _setExpanded;
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const { t } = useTranslation();
 
   const filtered = useMemo(() => {
@@ -218,18 +216,17 @@ void _setExpanded;
   const effectiveExpanded = useMemo(() => {
     const merged = new Set<string>(expanded);
     for (const p of autoExpanded) merged.add(p);
-    for (const p of collapsed) merged.delete(p);
     return merged;
-  }, [expanded, autoExpanded, searchQuery, collapsed]);
+  }, [expanded, autoExpanded]);
 
   const toggle = (path: string) => {
-    const next = new Set(collapsed);
-    if (effectiveExpanded.has(path)) {
-      next.add(path);
-    } else {
+    const next = new Set(expanded);
+    if (next.has(path)) {
       next.delete(path);
+    } else {
+      next.add(path);
     }
-    setCollapsed(next);
+    setExpanded(next);
   };
 
   return (
