@@ -24,7 +24,7 @@
 import * as http from "node:http";
 import * as https from "node:https";
 import * as path from "node:path";
-import { createSignal } from "solid-js";
+import { createSignal, For, Show } from "solid-js";
 
 import type { TuiPlugin, TuiPluginApi, TuiPluginMeta, TuiPluginModule, TuiSlotPlugin, TuiSlotContext } from "@opencode-ai/plugin/tui";
 
@@ -38,6 +38,13 @@ type SnapshotData = {
   captured: number;
   unchanged: number;
   files: Array<{ path: string; versionId: number }>;
+};
+
+type TrackedFile = {
+  project: string;
+  path: string;
+  latestVersionId: number | null;
+  createdAt: string;
 };
 
 type PluginOptions = Record<string, unknown> | undefined;
@@ -81,17 +88,6 @@ function httpGet(urlStr: string, token?: string, timeoutMs = 5000): Promise<{ st
   });
 }
 
-const skin = (theme: Record<string, unknown>) => ({
-  text: theme.text ?? "#f0f0f0",
-  muted: theme.textMuted ?? "#888888",
-  success: theme.success ?? "#4ade80",
-  warning: theme.warning ?? "#fbbf24",
-  error: theme.error ?? "#f87171",
-  accent: theme.accent ?? "#5f87ff",
-  backgroundPanel: theme.backgroundPanel,
-  border: theme.border,
-});
-
 const timeAgo = (isoStr: string): string => {
   const diff = (Date.now() - new Date(isoStr).getTime()) / 1000;
   if (diff < 60) return `${Math.round(diff)}s ago`;
@@ -101,51 +97,105 @@ const timeAgo = (isoStr: string): string => {
 
 const createSidebarSlot = (
   data: () => SnapshotData | null,
+  allFiles: () => TrackedFile[],
   error: () => string | null,
-): TuiSlotPlugin => ({
-  order: 100,
-  slots: {
-    sidebar_content(ctx: TuiSlotContext, _value: { session_id: string }) {
-      const colors = skin(ctx.theme.current);
-      const snapshot = data();
-      const err = error();
+): TuiSlotPlugin => {
+  const [sidebarOpen, setSidebarOpen] = createSignal(false);
 
-      let statusText = "";
-      let statusIcon = "";
+  const slotPlugin: TuiSlotPlugin = {
+    order: 100,
+    slots: {
+      sidebar_content(ctx: TuiSlotContext, _value: { session_id: string }) {
+        const theme = ctx.theme.current;
+        const snapshot = data();
+        const err = error();
 
-      if (err) {
-        statusText = err;
-        statusIcon = "\u26a0\ufe0f";
-      } else if (snapshot) {
-        const ago = timeAgo(snapshot.updatedAt);
-        const fileCount = snapshot.files?.length ?? 0;
-        const fileNames = snapshot.files
-          ?.slice(0, 3)
-          .map((f) => path.basename(f.path))
-          .join(", ") ?? "";
-        const more = fileCount > 3 ? `, +${fileCount - 3}` : "";
+        let statusLabel = "";
+        let statusColor = theme.textMuted;
+        let dotChar = "○";
 
-        statusText = `${snapshot.captured} captured ${ago}${fileNames ? ` · ${fileNames}${more}` : ""}`;
-        statusIcon = "\u2705";
-      } else {
-        statusText = "Waiting for snapshots...";
-        statusIcon = "";
-      }
+        const hasFiles = allFiles().length > 0;
+        if (err) {
+          statusLabel = err;
+          statusColor = theme.error;
+          dotChar = "●";
+        } else if (snapshot || hasFiles) {
+          statusLabel = "Connected";
+          statusColor = theme.success;
+          dotChar = "●";
+        } else {
+          statusLabel = "Waiting...";
+          statusColor = theme.textMuted;
+          dotChar = "○";
+        }
 
-      return (
-        <box
-          flexDirection="column"
-          gap={1}
-        >
-          <text fg={colors.text}>
-            <b>📦 changez</b>
-          </text>
-          <text fg={colors.text}>{statusIcon} {statusText}</text>
-        </box>
-      );
+        let summary = "";
+        if (snapshot) {
+          const ago = timeAgo(snapshot.updatedAt);
+          summary = `Last captured ${ago}`;
+        } else if (hasFiles) {
+          summary = "No snapshots yet";
+        }
+
+        const files = allFiles()
+          .filter((f) => f.latestVersionId !== null)
+          .map((f) => ({
+            path: f.path,
+            versionId: f.latestVersionId,
+          }));
+        const fileCount = files.length;
+        const showArrow = fileCount > 0;
+
+        return (
+          <box flexDirection="column" gap={1}>
+            <box
+              flexDirection="row"
+              gap={1}
+              justifyContent="space-between"
+              onMouseDown={() => setSidebarOpen((x) => !x)}
+            >
+              <text fg={theme.text}>
+                <Show when={showArrow}>
+                  <span>{sidebarOpen() ? "▼" : "▶"}</span>
+                  <span>{" "}</span>
+                </Show>
+                <b>changez</b>
+              </text>
+              <text fg={theme.text}>
+                <span style={{ fg: statusColor }}>{dotChar} </span>
+                <span style={{ fg: theme.textMuted }}>{statusLabel}</span>
+              </text>
+            </box>
+
+            <Show when={sidebarOpen()}>
+              <box flexDirection="column" gap={0}>
+                <Show when={summary}>
+                  <text fg={theme.textMuted}>{summary}</text>
+                </Show>
+
+                <Show when={fileCount > 0}>
+                  <For each={files}>
+                    {(file) => (
+                      <box flexDirection="row" gap={1} justifyContent="space-between">
+                        <text fg={theme.textMuted} wrapMode="none" flexShrink={0}>
+                          {"  • "}{path.basename(file.path)}
+                        </text>
+                        <text fg={theme.text} flexShrink={0}>
+                          @v{file.versionId}
+                        </text>
+                      </box>
+                    )}
+                  </For>
+                </Show>
+              </box>
+            </Show>
+          </box>
+        );
+      },
     },
-  },
-});
+  };
+  return slotPlugin;
+};
 
 const tui: TuiPlugin = async (
   api: TuiPluginApi,
@@ -158,9 +208,10 @@ const tui: TuiPlugin = async (
   };
 
   const [data, setData] = createSignal<SnapshotData | null>(null);
+  const [allFiles, setAllFiles] = createSignal<TrackedFile[]>([]);
   const [error, setError] = createSignal<string | null>(null);
 
-  const slotId = api.slots.register(createSidebarSlot(data, error));
+  const slotId = api.slots.register(createSidebarSlot(data, allFiles, error));
 
   api.lifecycle.onDispose(() => {
     api.slots.unregister(slotId);
@@ -169,7 +220,7 @@ const tui: TuiPlugin = async (
 
   let healthy = false;
   try {
-    const res = await httpGet(`${cfg.url}/health`, cfg.token, 3000);
+    const res = await httpGet(`${cfg.url}/health`, cfg.token, 5000);
     if (res.status >= 200 && res.status < 300) {
       healthy = true;
       api.ui.toast({
@@ -193,46 +244,80 @@ const tui: TuiPlugin = async (
       message: `Cannot reach service at ${cfg.url}`,
       duration: 4000,
     });
-    setError("Service unreachable");
-    return;
+    setError("Probing...");
   }
 
   const projectRoot = path.resolve(process.cwd());
+  const projectName = path.basename(projectRoot);
   let consecutiveFailures = 0;
+  let probeFailures = 0;
+  let isProbing = false;
   let pollInterval: ReturnType<typeof setInterval> | null = null;
 
-  const poll = async () => {
-    const url = `${cfg.url}/api/snapshots/latest?projectRoot=${encodeURIComponent(projectRoot)}`;
-    try {
-      const res = await httpGet(url, cfg.token, 5000);
-      if (res.status !== 200 || !res.body) {
-        consecutiveFailures++;
-        if (consecutiveFailures >= 3) {
-          setError("Service unreachable");
-          if (pollInterval) clearInterval(pollInterval);
-          pollInterval = null;
-        }
-        return;
-      }
-      consecutiveFailures = 0;
-      const parsed = JSON.parse(res.body);
-      setData(parsed);
-      setError(null);
-    } catch {
-      consecutiveFailures++;
-      if (consecutiveFailures >= 3) {
-        setError("Connection failed");
+  const startPolling = (interval: number, probing: boolean) => {
+    if (pollInterval) clearInterval(pollInterval);
+    isProbing = probing;
+    pollInterval = setInterval(poll, interval);
+  };
+
+  const handlePollFailure = () => {
+    if (isProbing) {
+      probeFailures++;
+      if (probeFailures >= 10) {
+        setError("Service offline");
         if (pollInterval) clearInterval(pollInterval);
         pollInterval = null;
       }
+    } else {
+      consecutiveFailures++;
+      if (consecutiveFailures >= 3) {
+   setError("Probing...");
+        consecutiveFailures = 0;
+        probeFailures = 0;
+        startPolling(60_000, true);
+      }
+    }
+  };
+
+  const poll = async () => {
+    const snapshotUrl = `${cfg.url}/api/snapshots/latest?projectRoot=${encodeURIComponent(projectRoot)}`;
+    const filesUrl = `${cfg.url}/api/files?project=${encodeURIComponent(projectName)}&limit=1000`;
+    try {
+      const [snapshotRes, filesRes] = await Promise.all([
+        httpGet(snapshotUrl, cfg.token, 5000),
+        httpGet(filesUrl, cfg.token, 5000),
+      ]);
+
+      if (snapshotRes.status !== 200 || !snapshotRes.body) {
+        handlePollFailure();
+        return;
+      }
+      consecutiveFailures = 0;
+      probeFailures = 0;
+      if (isProbing) {
+        setError(null);
+        startPolling(8000, false);
+      }
+      setData(JSON.parse(snapshotRes.body));
+
+      if (filesRes.status === 200 && filesRes.body) {
+        const parsed = JSON.parse(filesRes.body);
+        setAllFiles(parsed.files ?? []);
+        setError(null);
+      } else if (filesRes.status >= 400) {
+        setError(`Files error ${filesRes.status}`);
+      }
+    } catch {
+      handlePollFailure();
     }
   };
 
   if (healthy) {
     await poll();
+    startPolling(8000, false);
+  } else {
+    startPolling(60_000, true);
   }
-
-  pollInterval = setInterval(poll, 8000);
 };
 
 export default {

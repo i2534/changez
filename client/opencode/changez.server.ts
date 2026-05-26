@@ -141,6 +141,7 @@ function pickFilePath(args: Record<string, unknown>): string | undefined {
 /** 从 apply_patch 的 patchText 中解析目标文件路径和 action */
 function parsePatchTargets(
   patchText: string,
+  log: Logger,
 ): FileTarget[] {
   if (!patchText) return [];
 
@@ -168,6 +169,10 @@ function parsePatchTargets(
     results.push({ path: filePath, action });
   }
 
+  if (results.length === 0 && patchText.includes("***")) {
+    log("debug", "parsePatchTargets: patch contains '***' but no targets matched");
+  }
+
   return results;
 }
 
@@ -177,16 +182,20 @@ function extractRmPaths(command: string): string[] {
 
   const results: string[] = [];
 
-  const rmCmdRe = /\brm\s+(?:-[rfv]+\s+)*(.+?)(?=$|[;&|])/g;
-  let cmdMatch: RegExpExecArray | null;
-  while ((cmdMatch = rmCmdRe.exec(command)) !== null) {
-    const allArgs = cmdMatch[1].trim();
-    if (!allArgs) continue;
-    for (const filePath of allArgs.split(/\s+/)) {
-      if (filePath.includes("*") || filePath.includes("?")) continue;
-      if (filePath.endsWith("/")) continue;
-      if (filePath.startsWith("-")) continue;
-      results.push(filePath);
+  // Split on && first to handle chained commands
+  const parts = command.split(/&&/).map(s => s.trim());
+
+  for (const part of parts) {
+    const rmCmdRe = /\brm\s+(?:-[rfv]+\s+|--\w+\s+)*(.+?)(?=$|[;&|])/g;
+    let cmdMatch: RegExpExecArray | null;
+    while ((cmdMatch = rmCmdRe.exec(part)) !== null) {
+      const allArgs = cmdMatch[1].trim();
+      if (!allArgs) continue;
+      for (const filePath of allArgs.split(/\s+/)) {
+        if (filePath.includes("*") || filePath.includes("?")) continue;
+        if (filePath.startsWith("-")) continue;
+        results.push(filePath);
+      }
     }
   }
 
@@ -250,18 +259,42 @@ const createServerPlugin = async (
 
   log("info", `loaded (${cfg.url}, project: ${projectName})`);
 
-  try {
-    const res = await httpRequest(cfg, "POST", "/api/projects", {
-      rootPath: projectRoot,
-      name: projectName,
-    });
-    if (res.status === 201) {
-      log("info", `project registered: ${projectName}`);
-    } else if (res.status !== 409) {
-      log("warn", `project registration failed: ${res.status}`);
+  // Project 注册：成功后停止，失败则每 30 秒无限重试
+  let registered = false;
+  let registerTimer: ReturnType<typeof setInterval> | null = null;
+
+  const registerProject = async () => {
+    try {
+      const res = await httpRequest(cfg, "POST", "/api/projects", {
+        rootPath: projectRoot,
+        name: projectName,
+      });
+      if (res.status === 201) {
+        log("info", `project registered: ${projectName}`);
+        registered = true;
+        if (registerTimer) {
+          clearInterval(registerTimer);
+          registerTimer = null;
+        }
+      } else if (res.status === 409) {
+        log("info", `project already registered: ${projectName}`);
+        registered = true;
+        if (registerTimer) {
+          clearInterval(registerTimer);
+          registerTimer = null;
+        }
+      } else {
+        log("warn", `project registration failed: ${res.status}`);
+      }
+    } catch (e) {
+      log("warn", `project registration error: ${String(e)}`);
     }
-  } catch (e) {
-    log("warn", `project registration error: ${String(e)}`);
+  };
+
+  await registerProject();
+  if (!registered) {
+    registerTimer = setInterval(registerProject, 30_000);
+    log("debug", `project registration retry started (every 30s)`);
   }
 
   return {
@@ -290,7 +323,10 @@ const createServerPlugin = async (
         const { tool: rawTool, sessionID } = input;
         const tool = rawTool.toLowerCase();
         const args = input.args;
-        const model = sessionModels.get(sessionID) ?? "";
+        const model = sessionModels.get(sessionID);
+        if (!model) {
+          log("debug", `no model info for session ${sessionID}`);
+        }
 
         log("debug", `tool.execute.after triggered: tool=${rawTool}`, {
           tool: rawTool,
@@ -310,7 +346,7 @@ const createServerPlugin = async (
           const patchText =
             (typeof args?.patchText === "string" ? args.patchText : "") ||
             (typeof args?.patch === "string" ? args.patch : "");
-          filePaths = parsePatchTargets(patchText);
+          filePaths = parsePatchTargets(patchText, log);
         } else if (tool === "bash") {
           const cmd =
             (typeof args?.command === "string" ? args.command : "") ||
@@ -373,7 +409,13 @@ const createServerPlugin = async (
         });
 
         if (res.status >= 400) {
-          log("warn", `snapshot HTTP error: ${res.status}`);
+          const body = res.json as { error?: { code?: string; message?: string } } | undefined;
+          const errorMsg = body?.error?.message ?? JSON.stringify(body);
+          if (res.status >= 500) {
+            log("warn", `snapshot server error: ${res.status} — ${errorMsg}`);
+          } else {
+            log("error", `snapshot client error: ${res.status} — ${errorMsg}`);
+          }
           return;
         }
 
