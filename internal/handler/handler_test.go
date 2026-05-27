@@ -1007,32 +1007,29 @@ func TestRebuildFromDeltaChain_EmptyContent(t *testing.T) {
 	_ = v1ID
 }
 
-// ========== applyPatch Tests ==========
+// ========== applyDiffs Tests ==========
 
-func TestApplyPatch(t *testing.T) {
+func TestApplyDiffs(t *testing.T) {
 	dmp := diffmatchpatch.New()
 	diffs := dmp.DiffMain("hello world", "hello wonderful world", false)
 
-	result, err := applyPatch(dmp, []byte("hello world"), diffs)
-	require.NoError(t, err)
+	result := applyDiffs(dmp, diffs)
 	assert.Equal(t, "hello wonderful world", string(result))
 }
 
-func TestApplyPatch_Deletion(t *testing.T) {
+func TestApplyDiffs_Deletion(t *testing.T) {
 	dmp := diffmatchpatch.New()
 	diffs := dmp.DiffMain("hello beautiful world", "hello world", false)
 
-	result, err := applyPatch(dmp, []byte("hello beautiful world"), diffs)
-	require.NoError(t, err)
+	result := applyDiffs(dmp, diffs)
 	assert.Equal(t, "hello world", string(result))
 }
 
-func TestApplyPatch_MultipleChanges(t *testing.T) {
+func TestApplyDiffs_MultipleChanges(t *testing.T) {
 	dmp := diffmatchpatch.New()
 	diffs := dmp.DiffMain("line1\nline2\nline3\n", "line1\nline2_modified\nline3\nline4\n", false)
 
-	result, err := applyPatch(dmp, []byte("line1\nline2\nline3\n"), diffs)
-	require.NoError(t, err)
+	result := applyDiffs(dmp, diffs)
 	assert.Equal(t, "line1\nline2_modified\nline3\nline4\n", string(result))
 }
 

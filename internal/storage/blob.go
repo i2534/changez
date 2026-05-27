@@ -125,6 +125,23 @@ func (s *BlobStore) Read(hash string) ([]byte, error) {
 	}
 }
 
+// Dir 返回 blob 存储目录路径。
+func (s *BlobStore) Dir() string {
+	return s.dir
+}
+
+// Remove 删除指定的 blob 文件。
+func (s *BlobStore) Remove(hash string) error {
+	blobPath := filepath.Join(s.dir, hash)
+	if err := os.Remove(blobPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("remove blob %q: %w", hash, err)
+	}
+	return nil
+}
+
 // RemoveOrphanBlobs 删除 blobs/ 目录下未被引用的孤儿文件。
 // referencedHashes 包含所有被 versions 表引用的 blob hash。
 // 同时清理遗留的 .tmp 临时文件。

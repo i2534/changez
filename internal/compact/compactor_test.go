@@ -309,8 +309,8 @@ func TestRebuildFromDeltaChain(t *testing.T) {
 	assert.Equal(t, content3, string(rebuilt))
 }
 
-// TestApplyPatch 测试 applyPatch 正确应用 diff
-func TestApplyPatch(t *testing.T) {
+// TestApplyDiffs 测试 applyDiffs 正确应用 diff
+func TestApplyDiffs(t *testing.T) {
 	dmp := diffmatchpatch.New()
 
 	original := []byte("hello world")
@@ -318,12 +318,12 @@ func TestApplyPatch(t *testing.T) {
 
 	diffs := dmp.DiffMain(string(original), modified, false)
 
-	result := applyPatch(dmp, original, diffs)
+	result := applyDiffs(dmp, diffs)
 	assert.Equal(t, modified, string(result))
 }
 
-// TestApplyPatchWithDeletion 测试 applyPatch 处理删除操作
-func TestApplyPatchWithDeletion(t *testing.T) {
+// TestApplyDiffsWithDeletion 测试 applyDiffs 处理删除操作
+func TestApplyDiffsWithDeletion(t *testing.T) {
 	dmp := diffmatchpatch.New()
 
 	original := []byte("hello beautiful amazing world")
@@ -331,12 +331,12 @@ func TestApplyPatchWithDeletion(t *testing.T) {
 
 	diffs := dmp.DiffMain(string(original), modified, false)
 
-	result := applyPatch(dmp, original, diffs)
+	result := applyDiffs(dmp, diffs)
 	assert.Equal(t, modified, string(result))
 }
 
-// TestApplyPatchWithInsertion 测试 applyPatch 处理插入操作
-func TestApplyPatchWithInsertion(t *testing.T) {
+// TestApplyDiffsWithInsertion 测试 applyDiffs 处理插入操作
+func TestApplyDiffsWithInsertion(t *testing.T) {
 	dmp := diffmatchpatch.New()
 
 	original := []byte("hello world")
@@ -344,7 +344,7 @@ func TestApplyPatchWithInsertion(t *testing.T) {
 
 	diffs := dmp.DiffMain(string(original), modified, false)
 
-	result := applyPatch(dmp, original, diffs)
+	result := applyDiffs(dmp, diffs)
 	assert.Equal(t, modified, string(result))
 }
 

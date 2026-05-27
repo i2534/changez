@@ -220,7 +220,7 @@ func (c *Compactor) rebuildFromDeltaChain(ctx context.Context, ver map[string]an
 			}
 
 			for i := len(steps) - 1; i >= 0; i-- {
-				content = applyPatch(dmp, content, steps[i].diffs)
+				content = applyDiffs(dmp, steps[i].diffs)
 			}
 			return content, nil
 
@@ -298,20 +298,9 @@ func (c *Compactor) scanAndCompact() {
 	}
 }
 
-// applyPatch 应用 go-diff patch。
-func applyPatch(dmp *diffmatchpatch.DiffMatchPatch, text []byte, diffs []diffmatchpatch.Diff) []byte {
-	patches := dmp.PatchMake(string(text), diffs)
-	result, applied := dmp.PatchApply(patches, string(text))
-	failed := 0
-	for _, ok := range applied {
-		if !ok {
-			failed++
-		}
-	}
-	if failed > 0 {
-		slog.Warn("applyPatch partial failure", "total", len(applied), "failed", failed)
-	}
-	return []byte(result)
+// applyDiffs 从 diff 操作列表重建目标文本。
+func applyDiffs(dmp *diffmatchpatch.DiffMatchPatch, diffs []diffmatchpatch.Diff) []byte {
+	return []byte(dmp.DiffText2(diffs))
 }
 
 // getFileLock 返回 fileID 对应的排他锁。

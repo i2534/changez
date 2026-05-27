@@ -49,6 +49,10 @@ func (s *DeltaStore) EnsureDir() error {
 	return os.MkdirAll(s.dir, 0o755)
 }
 
+func (s *DeltaStore) Dir() string {
+	return s.dir
+}
+
 func compressZstd(data []byte) ([]byte, error) {
 	var buf bytes.Buffer
 	w, err := zstd.NewWriter(&buf)
