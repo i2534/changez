@@ -148,64 +148,155 @@ func (h *Handler) doDiff(ctx context.Context, path string, versionA, versionB in
 	return renderUnifiedDiff(path, verA["changedAt"].(string), verB["changedAt"].(string), diffs), nil
 }
 
+type lineEntry struct {
+	op   byte
+	text string
+}
+
 func renderUnifiedDiff(filePath, timeA, timeB string, diffs []diffmatchpatch.Diff) string {
 	var b strings.Builder
 
 	b.WriteString(fmt.Sprintf("--- a/%s\t%s\n", filePath, timeA))
 	b.WriteString(fmt.Sprintf("+++ b/%s\t%s\n", filePath, timeB))
 
-	type lineEntry struct {
-		op   rune
-		text string
+	// 从 []Diff 重建旧/新文本
+	dmp := diffmatchpatch.New()
+	textA := dmp.DiffText1(diffs)
+	textB := dmp.DiffText2(diffs)
+
+	// 使用 DiffLinesToChars 做行级 diff
+	charsA, charsB, lineArray := dmp.DiffLinesToChars(textA, textB)
+	lineDiffs := dmp.DiffMain(charsA, charsB, true)
+
+	// 将字符级 diff 展开为行级 lineEntry
+	charToLine := make(map[rune]string)
+	for i := 1; i < len(lineArray); i++ {
+		charToLine[rune(i)] = lineArray[i]
 	}
 
 	var allLines []lineEntry
-	for _, d := range diffs {
-		text := d.Text
-		lines := strings.Split(text, "\n")
-		for _, line := range lines {
-			if d.Type == diffmatchpatch.DiffEqual {
-				allLines = append(allLines, lineEntry{' ', line})
-			} else if d.Type == diffmatchpatch.DiffInsert {
-				allLines = append(allLines, lineEntry{'+', line})
-			} else if d.Type == diffmatchpatch.DiffDelete {
-				allLines = append(allLines, lineEntry{'-', line})
+	for _, d := range lineDiffs {
+		for _, ch := range d.Text {
+			line := charToLine[ch]
+			var op byte
+			switch d.Type {
+			case diffmatchpatch.DiffEqual:
+				op = ' '
+			case diffmatchpatch.DiffInsert:
+				op = '+'
+			case diffmatchpatch.DiffDelete:
+				op = '-'
+			}
+			allLines = append(allLines, lineEntry{op, line})
+		}
+	}
+
+	// 多 hunk 输出：上下文 3 行
+	const contextSize = 3
+	hunks := extractHunks(allLines, contextSize)
+	for _, hunk := range hunks {
+		writeHunk(&b, hunk.startA, hunk.startB, hunk.lines)
+	}
+
+	return b.String()
+}
+
+type hunk struct {
+	startA, countA int
+	startB, countB int
+	lines          []lineEntry
+}
+
+func extractHunks(allLines []lineEntry, contextSize int) []hunk {
+	type changeRange struct{ lo, hi int }
+	var changes []changeRange
+	for i, l := range allLines {
+		if l.op != ' ' {
+			if len(changes) > 0 && changes[len(changes)-1].hi == i {
+				changes[len(changes)-1].hi++
+			} else {
+				changes = append(changes, changeRange{i, i + 1})
 			}
 		}
 	}
-	if len(allLines) > 0 && allLines[len(allLines)-1].text == "" {
-		allLines = allLines[:len(allLines)-1]
+
+	if len(changes) == 0 {
+		return nil
 	}
 
-	startA, startB := 1, 1
+	// 合并距离 ≤ contextSize*2 的变更范围
+	var merged []changeRange
+	for _, c := range changes {
+		if len(merged) > 0 && c.lo <= merged[len(merged)-1].hi+contextSize*2 {
+			merged[len(merged)-1].hi = c.hi
+		} else {
+			merged = append(merged, c)
+		}
+	}
+
+	// 为每个合并范围提取 hunk（含上下文）
+	var hunks []hunk
+	for _, c := range merged {
+		lo := c.lo - contextSize
+		if lo < 0 {
+			lo = 0
+		}
+		hi := c.hi + contextSize
+		if hi > len(allLines) {
+			hi = len(allLines)
+		}
+
+		hunkLines := allLines[lo:hi]
+		startA, startB := 1, 1
+		countA, countB := 0, 0
+
+		// 计算起始行号
+		for i := 0; i < lo; i++ {
+			switch allLines[i].op {
+			case ' ', '-':
+				startA++
+			case '+':
+				startB++
+			}
+		}
+
+		// 计算 hunk 行数
+		for _, l := range hunkLines {
+			switch l.op {
+			case ' ', '-':
+				countA++
+			case '+':
+				countB++
+			}
+		}
+
+		hunks = append(hunks, hunk{
+			startA: startA, countA: countA,
+			startB: startB, countB: countB,
+			lines:  hunkLines,
+		})
+	}
+
+	return hunks
+}
+
+func writeHunk(b *strings.Builder, startA, startB int, lines []lineEntry) {
 	countA, countB := 0, 0
-	for _, l := range allLines {
+	for _, l := range lines {
 		switch l.op {
-		case ' ':
-			countA++
-			countB++
-		case '-':
+		case ' ', '-':
 			countA++
 		case '+':
 			countB++
 		}
 	}
-
 	if countA == 0 && countB == 0 {
-		return b.String()
+		return
 	}
-
 	b.WriteString(fmt.Sprintf("@@ -%d,%d +%d,%d @@\n", startA, countA, startB, countB))
-
-	for _, l := range allLines {
-		if l.op == ' ' {
-			b.WriteString(" " + l.text + "\n")
-		} else if l.op == '-' {
-			b.WriteString("-" + l.text + "\n")
-		} else if l.op == '+' {
-			b.WriteString("+" + l.text + "\n")
-		}
+	for _, l := range lines {
+		b.WriteByte(l.op)
+		b.WriteString(strings.TrimSuffix(l.text, "\n"))
+		b.WriteByte('\n')
 	}
-
-	return b.String()
 }

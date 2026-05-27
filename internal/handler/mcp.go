@@ -192,6 +192,9 @@ func (h *Handler) snapshotSingleFile(ctx context.Context, filePath, action, cont
 		return SnapshotResult{Path: filePath, Status: "error", Reason: fmt.Sprintf("写入版本记录失败: %v", txErr)}
 	}
 
+	// TODO: DeltaStore.Append 在事务外执行。如果后续步骤失败导致事务回滚，
+	// delta 文件会留下孤儿数据（不影响正确性但会膨胀文件）。
+	// 长期方案：将 Append 移入事务或采用两阶段提交。
 	threshold := h.Config.Compact.DeltaCompressThreshold
 	offset, _, txErr := h.DeltaStore.Append(fileID, versionID, diffs, meta, threshold)
 	if txErr != nil {

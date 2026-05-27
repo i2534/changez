@@ -151,7 +151,11 @@ func (h *Handler) rebuildFromDeltaChain(ctx context.Context, ver map[string]any)
 			}
 
 			for i := len(steps) - 1; i >= 0; i-- {
-				content = applyPatch(dmp, content, steps[i].diffs)
+				var err error
+				content, err = applyPatch(dmp, content, steps[i].diffs)
+				if err != nil {
+					return nil, fmt.Errorf("应用 delta (step %d) 失败: %w", i, err)
+				}
 			}
 			return content, nil
 
@@ -186,9 +190,22 @@ func (h *Handler) rebuildFromDeltaChain(ctx context.Context, ver map[string]any)
 }
 
 // applyPatch 对内容应用 go-diff 的 []Diff（PatchApply）。
-func applyPatch(dmp *diffmatchpatch.DiffMatchPatch, text []byte, diffs []diffmatchpatch.Diff) []byte {
-	patches := dmp.PatchMake(string(text), diffs)
-	result, applied := dmp.PatchApply(patches, string(text))
+func applyPatch(dmp *diffmatchpatch.DiffMatchPatch, text []byte, diffs []diffmatchpatch.Diff) ([]byte, error) {
+	var result string
+	var applied []bool
+	var err error
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				err = fmt.Errorf("applyPatch panic: %v", r)
+			}
+		}()
+		patches := dmp.PatchMake(string(text), diffs)
+		result, applied = dmp.PatchApply(patches, string(text))
+	}()
+	if err != nil {
+		return nil, err
+	}
 	failed := 0
 	for _, ok := range applied {
 		if !ok {
@@ -198,7 +215,7 @@ func applyPatch(dmp *diffmatchpatch.DiffMatchPatch, text []byte, diffs []diffmat
 	if failed > 0 {
 		slog.Warn("applyPatch partial failure", "total", len(applied), "failed", failed)
 	}
-	return []byte(result)
+	return []byte(result), nil
 }
 
 // HandleListFiles 处理 GET /api/files，列出所有追踪的文件。

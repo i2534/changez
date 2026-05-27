@@ -717,17 +717,23 @@ func (d *DB) Query(ctx context.Context, query string, args ...any) (*sql.Rows, e
 // 事务方案保证 delta_offset=0 永远不会正常提交，
 // 所以启动时直接删除 storage_mode='delta' 且 delta_offset 异常的记录。
 func (d *DB) RecoverOrphans(ctx context.Context) error {
-	// 先解除 versions.base_id 对这些 orphan 的引用
+	// 将引用 orphan 的 base_id 重定向到同文件的前一个 blob 版本（而非设为 NULL）
 	if _, err := d.db.ExecContext(ctx, `
 		UPDATE versions
-		SET base_id = NULL
+		SET base_id = (
+			SELECT v2.id FROM versions v2
+			WHERE v2.file_id = versions.file_id
+			AND v2.storage_mode = 'blob'
+			AND v2.id < versions.id
+			ORDER BY v2.id DESC LIMIT 1
+		)
 		WHERE base_id IN (
 			SELECT id FROM versions
 			WHERE storage_mode = 'delta'
 			AND (delta_offset IS NULL OR delta_offset = 0)
 		)
 	`); err != nil {
-		return fmt.Errorf("unlink orphan base_ids: %w", err)
+		return fmt.Errorf("relink orphan base_ids: %w", err)
 	}
 
 	// 再解除 files.latest_version_id 对这些 orphan 的引用

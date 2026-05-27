@@ -411,7 +411,12 @@ func TestDiff(t *testing.T) {
 	var diffResp map[string]any
 	require.NoError(t, json.Unmarshal(w3.Body.Bytes(), &diffResp))
 	require.Contains(t, diffResp, "diff")
-	require.NotEmpty(t, diffResp["diff"])
+	diffStr := diffResp["diff"].(string)
+	require.NotEmpty(t, diffStr)
+	// 验证 unified diff 格式
+	require.Contains(t, diffStr, "--- a/")
+	require.Contains(t, diffStr, "+++ b/")
+	require.Regexp(t, `@@ -\d+,\d+ \+\d+,\d+ @@`, diffStr, "hunk header should match @@ -start,count +start,count @@")
 }
 
 func TestDiff_AdjacentDelta(t *testing.T) {
@@ -448,6 +453,15 @@ func TestDiff_AdjacentDelta(t *testing.T) {
 	h.HandleDiff(w3, req3)
 
 	require.Equal(t, http.StatusOK, w3.Code)
+
+	var adjDiffResp map[string]any
+	require.NoError(t, json.Unmarshal(w3.Body.Bytes(), &adjDiffResp))
+	require.Contains(t, adjDiffResp, "diff")
+	adjDiffStr := adjDiffResp["diff"].(string)
+	require.NotEmpty(t, adjDiffStr)
+	require.Contains(t, adjDiffStr, "--- a/")
+	require.Contains(t, adjDiffStr, "+++ b/")
+	require.Regexp(t, `@@ -\d+,\d+ \+\d+,\d+ @@`, adjDiffStr)
 }
 
 func TestDiff_MissingParams(t *testing.T) {
@@ -999,7 +1013,8 @@ func TestApplyPatch(t *testing.T) {
 	dmp := diffmatchpatch.New()
 	diffs := dmp.DiffMain("hello world", "hello wonderful world", false)
 
-	result := applyPatch(dmp, []byte("hello world"), diffs)
+	result, err := applyPatch(dmp, []byte("hello world"), diffs)
+	require.NoError(t, err)
 	assert.Equal(t, "hello wonderful world", string(result))
 }
 
@@ -1007,7 +1022,8 @@ func TestApplyPatch_Deletion(t *testing.T) {
 	dmp := diffmatchpatch.New()
 	diffs := dmp.DiffMain("hello beautiful world", "hello world", false)
 
-	result := applyPatch(dmp, []byte("hello beautiful world"), diffs)
+	result, err := applyPatch(dmp, []byte("hello beautiful world"), diffs)
+	require.NoError(t, err)
 	assert.Equal(t, "hello world", string(result))
 }
 
@@ -1015,7 +1031,8 @@ func TestApplyPatch_MultipleChanges(t *testing.T) {
 	dmp := diffmatchpatch.New()
 	diffs := dmp.DiffMain("line1\nline2\nline3\n", "line1\nline2_modified\nline3\nline4\n", false)
 
-	result := applyPatch(dmp, []byte("line1\nline2\nline3\n"), diffs)
+	result, err := applyPatch(dmp, []byte("line1\nline2\nline3\n"), diffs)
+	require.NoError(t, err)
 	assert.Equal(t, "line1\nline2_modified\nline3\nline4\n", string(result))
 }
 
