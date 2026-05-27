@@ -112,3 +112,43 @@ func (h *Handler) HandleListProjects(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]any{"projects": projects})
 }
+
+func (h *Handler) HandleDeleteFile(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "仅支持 DELETE")
+		return
+	}
+
+	project := r.URL.Query().Get("project")
+	path := r.URL.Query().Get("path")
+	if project == "" || path == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "需要 project 和 path 参数")
+		return
+	}
+
+	ctx := r.Context()
+	prj, err := h.DB.FindProjectByName(ctx, project)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "PROJECT_NOT_FOUND", err.Error())
+		return
+	}
+
+	file, err := h.DB.GetFileByPath(ctx, prj["id"].(int64), path)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "FILE_NOT_FOUND", err.Error())
+		return
+	}
+
+	fileID := file["id"].(int64)
+	fileMu := h.getFileLock(fileID)
+	fileMu.Lock()
+	defer fileMu.Unlock()
+
+	if err := h.DB.SoftDeleteFile(ctx, fileID); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+
+	h.Logger.Info("file deleted", "file_id", fileID, "path", path)
+	writeJSON(w, http.StatusOK, map[string]any{"message": "文件已删除"})
+}

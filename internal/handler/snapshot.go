@@ -151,11 +151,7 @@ func (h *Handler) rebuildFromDeltaChain(ctx context.Context, ver map[string]any)
 			}
 
 			for i := len(steps) - 1; i >= 0; i-- {
-				var err error
-				content, err = applyPatch(dmp, content, steps[i].diffs)
-				if err != nil {
-					return nil, fmt.Errorf("应用 delta (step %d) 失败: %w", i, err)
-				}
+				content = applyDiffs(dmp, steps[i].diffs)
 			}
 			return content, nil
 
@@ -189,33 +185,10 @@ func (h *Handler) rebuildFromDeltaChain(ctx context.Context, ver map[string]any)
 	return nil, fmt.Errorf("delta 链过长，超过最大深度 1000")
 }
 
-// applyPatch 对内容应用 go-diff 的 []Diff（PatchApply）。
-func applyPatch(dmp *diffmatchpatch.DiffMatchPatch, text []byte, diffs []diffmatchpatch.Diff) ([]byte, error) {
-	var result string
-	var applied []bool
-	var err error
-	func() {
-		defer func() {
-			if r := recover(); r != nil {
-				err = fmt.Errorf("applyPatch panic: %v", r)
-			}
-		}()
-		patches := dmp.PatchMake(string(text), diffs)
-		result, applied = dmp.PatchApply(patches, string(text))
-	}()
-	if err != nil {
-		return nil, err
-	}
-	failed := 0
-	for _, ok := range applied {
-		if !ok {
-			failed++
-		}
-	}
-	if failed > 0 {
-		slog.Warn("applyPatch partial failure", "total", len(applied), "failed", failed)
-	}
-	return []byte(result), nil
+// applyDiffs 从 diff 操作列表重建目标文本。
+// 使用 DiffText2 直接重建，避免 PatchApply 的 slice bounds panic。
+func applyDiffs(dmp *diffmatchpatch.DiffMatchPatch, diffs []diffmatchpatch.Diff) []byte {
+	return []byte(dmp.DiffText2(diffs))
 }
 
 // HandleListFiles 处理 GET /api/files，列出所有追踪的文件。
@@ -244,7 +217,7 @@ func (h *Handler) HandleListFiles(w http.ResponseWriter, r *http.Request) {
 		SELECT p.name as project_name, f.path, f.latest_version_id, f.created_at
 		FROM files f
 		JOIN projects p ON f.project_id = p.id
-		WHERE p.is_deleted = 0
+		WHERE p.is_deleted = 0 AND f.is_deleted = 0
 	`
 	args := []any{}
 

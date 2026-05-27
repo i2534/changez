@@ -56,7 +56,14 @@ func New(
 	apiMux.HandleFunc("/api/snapshot", h.HandleSnapshot)
 
 	apiMux.HandleFunc("/api/files", func(w http.ResponseWriter, r *http.Request) {
-		h.HandleListFiles(w, r)
+		switch r.Method {
+		case http.MethodGet:
+			h.HandleListFiles(w, r)
+		case http.MethodDelete:
+			h.HandleDeleteFile(w, r)
+		default:
+			writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "仅支持 GET 和 DELETE")
+		}
 	})
 
 	// 文件操作子路由（path 通过 query parameter 传递）
