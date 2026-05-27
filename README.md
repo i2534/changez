@@ -244,4 +244,4 @@ cd web && npm run build
 
 ## 许可
 
-[待定]
+[MIT](LICENSE)
