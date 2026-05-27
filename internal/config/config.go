@@ -59,7 +59,7 @@ func Defaults() Config {
 		},
 		Cleanup: CleanupCfg{
 			Enabled:  true,
-			Interval: "24h",
+			Interval: "168h",
 		},
 		Log: LogCfg{
 			Level: "info",
