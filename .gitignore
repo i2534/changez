@@ -31,4 +31,4 @@ web/dist/
 !web/dist/.gitkeep
 
 # Reasonix
-REASONIX.md
+/REASONIX.md
