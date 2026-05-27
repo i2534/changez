@@ -4,6 +4,7 @@
     "error": "错误",
     "retry": "重试",
     "cancel": "取消",
+    "confirm": "确认",
     "clear": "清除",
     "no_results": "未找到结果。"
   },
@@ -21,14 +22,24 @@
     "no_projects": "未找到项目。",
     "created": "创建时间：",
     "files_count": "{{count}} 个文件",
-    "failed_to_load": "加载项目失败"
+    "failed_to_load": "加载项目失败",
+    "delete": "删除",
+    "delete_confirm_title": "删除项目",
+    "delete_confirm_message": "确定要删除项目 \"{{name}}\" 吗？这将同时删除全部 {{file_count}} 个文件及其版本历史。",
+    "deleted_success": "项目已删除",
+    "failed_to_delete": "删除项目失败"
   },
   "files": {
     "search_placeholder": "搜索文件...",
     "no_files": "未找到文件。",
     "project_label": "项目：",
     "files_count": "{{count}} 个文件",
-    "failed_to_load": "加载文件失败"
+    "failed_to_load": "加载文件失败",
+    "delete": "删除",
+    "delete_confirm_title": "删除文件",
+    "delete_confirm_message": "确定要删除 \"{{path}}\" 吗？这将删除所有版本历史。",
+    "deleted_success": "文件已删除",
+    "failed_to_delete": "删除文件失败"
   },
   "timeline": {
     "all_sources": "全部来源",

@@ -4,6 +4,7 @@
     "error": "Error",
     "retry": "Retry",
     "cancel": "Cancel",
+    "confirm": "Confirm",
     "clear": "Clear",
     "no_results": "No results found."
   },
@@ -21,14 +22,24 @@
     "no_projects": "No projects found.",
     "created": "Created:",
     "files_count": "{{count}} files",
-    "failed_to_load": "Failed to load projects"
+    "failed_to_load": "Failed to load projects",
+    "delete": "Delete",
+    "delete_confirm_title": "Delete Project",
+    "delete_confirm_message": "Are you sure you want to delete project \"{{name}}\"? This will also remove all {{file_count}} files and their version history.",
+    "deleted_success": "Project deleted successfully",
+    "failed_to_delete": "Failed to delete project"
   },
   "files": {
     "search_placeholder": "Search files...",
     "no_files": "No files found.",
     "project_label": "Project:",
     "files_count": "{{count}} files",
-    "failed_to_load": "Failed to load files"
+    "failed_to_load": "Failed to load files",
+    "delete": "Delete",
+    "delete_confirm_title": "Delete File",
+    "delete_confirm_message": "Are you sure you want to delete \"{{path}}\"? This will remove all version history.",
+    "deleted_success": "File deleted successfully",
+    "failed_to_delete": "Failed to delete file"
   },
   "timeline": {
     "all_sources": "All Sources",

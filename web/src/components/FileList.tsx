@@ -18,7 +18,7 @@ function buildTree(files: File[]): TreeNode[] {
     const fileName = segments[segments.length - 1];
 
     let currentPath = "";
-    let currentDir = { children: root };
+    let currentDir: { children: TreeNode[] } = { children: root };
 
     for (const seg of segments.slice(0, -1)) {
       currentPath = currentPath ? `${currentPath}/${seg}` : seg;
@@ -29,7 +29,14 @@ function buildTree(files: File[]): TreeNode[] {
         const { children } = currentDir;
         let inserted = false;
         for (let i = 0; i < children.length; i++) {
-          if (children[i].type === "dir" && children[i].name > seg) {
+          if (children[i].type === "dir") {
+            if (children[i].name > seg) {
+              children.splice(i, 0, dirNode);
+              inserted = true;
+              break;
+            }
+          } else {
+            // 目录排在文件前面，遇到第一个文件就插入
             children.splice(i, 0, dirNode);
             inserted = true;
             break;
@@ -46,7 +53,11 @@ function buildTree(files: File[]): TreeNode[] {
     const fileNode: TreeNode = { type: "file", name: fileName, file };
     let inserted = false;
     for (let i = 0; i < children.length; i++) {
-      if (children[i].type === "file" && children[i].name > fileName) {
+      if (children[i].type === "dir") {
+        // 文件排在目录后面，跳过所有目录
+        continue;
+      }
+      if (children[i].name > fileName) {
         children.splice(i, 0, fileNode);
         inserted = true;
         break;
@@ -95,12 +106,14 @@ function TreeNodeView({
   expanded,
   onToggle,
   onFileClick,
+  onFileDelete,
 }: {
   node: TreeNode;
   depth: number;
   expanded: Set<string>;
   onToggle: (path: string) => void;
   onFileClick: (path: string) => void;
+  onFileDelete?: (file: File) => void;
 }) {
   const { t } = useTranslation();
   if (node.type === "file") {
@@ -119,6 +132,18 @@ function TreeNodeView({
             <span>v{node.file.latestVersionId}</span>
           )}
           <span>{relativeTime(node.file.createdAt, t)}</span>
+          {onFileDelete && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onFileDelete(node.file);
+              }}
+              className="rounded px-1.5 py-0.5 text-gray-600 transition-colors hover:bg-red-600/20 hover:text-red-400"
+              title={t("files.delete")}
+            >
+              🗑
+            </button>
+          )}
         </div>
       </button>
     );
@@ -147,6 +172,7 @@ function TreeNodeView({
           expanded={expanded}
           onToggle={onToggle}
           onFileClick={onFileClick}
+          onFileDelete={onFileDelete}
         />
       )}
     </div>
@@ -159,12 +185,14 @@ function TreeNodeList({
   expanded,
   onToggle,
   onFileClick,
+  onFileDelete,
 }: {
   nodes: TreeNode[];
   depth: number;
   expanded: Set<string>;
   onToggle: (path: string) => void;
   onFileClick: (path: string) => void;
+  onFileDelete?: (file: File) => void;
 }) {
   return (
     <>
@@ -178,6 +206,7 @@ function TreeNodeList({
             expanded={expanded}
             onToggle={onToggle}
             onFileClick={onFileClick}
+            onFileDelete={onFileDelete}
           />
         );
       })}
@@ -188,11 +217,13 @@ function TreeNodeList({
 export default function FileList({
   files,
   onFileClick,
+  onFileDelete,
   searchQuery,
   onSearchChange,
 }: {
   files: File[];
   onFileClick: (path: string) => void;
+  onFileDelete?: (file: File) => void;
   searchQuery: string;
   onSearchChange: (q: string) => void;
 }) {
@@ -248,6 +279,7 @@ export default function FileList({
           expanded={effectiveExpanded}
           onToggle={toggle}
           onFileClick={onFileClick}
+          onFileDelete={onFileDelete}
         />
       </div>
 

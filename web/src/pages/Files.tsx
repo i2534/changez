@@ -4,6 +4,7 @@ import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { apiJSON } from "../api/client";
 import { File } from "../api/types";
 import FileList from "../components/FileList";
+import ConfirmDialog from "../components/ConfirmDialog";
 import { toast } from "sonner";
 
 export default function Files() {
@@ -13,6 +14,7 @@ export default function Files() {
   const [files, setFiles] = useState<File[]>([]);
   const [search, setSearch] = useState(searchParams.get("filter") || "");
   const [loading, setLoading] = useState(true);
+  const [deleteTarget, setDeleteTarget] = useState<File | null>(null);
   const { t } = useTranslation();
 
   const projectName = decodeURIComponent(project || "");
@@ -34,6 +36,23 @@ export default function Files() {
       .finally(() => setLoading(false));
     return () => abort.abort();
   }, [projectName, t]);
+
+  const handleDeleteFile = () => {
+    if (!deleteTarget || !projectName) return;
+    const path = deleteTarget.path;
+    apiJSON<{ message: string }>(
+      `/api/files?project=${encodeURIComponent(projectName)}&path=${encodeURIComponent(path)}`,
+      { method: "DELETE" }
+    )
+      .then(() => {
+        setFiles((prev) => prev.filter((f) => f.path !== path));
+        toast.success(t("files.deleted_success"));
+      })
+      .catch((err) => {
+        toast.error(err instanceof Error ? err.message : t("files.failed_to_delete"));
+      })
+      .finally(() => setDeleteTarget(null));
+  };
 
   if (loading) {
     return (
@@ -61,13 +80,22 @@ export default function Files() {
       </div>
       <FileList
         files={files}
-        onFileClick={(path) =>
+        onFileClick={(filePath) =>
           navigate(
-            `/projects/${encodeURIComponent(projectName)}/files/${encodeURIComponent(path)}`
+            `/projects/${encodeURIComponent(projectName)}/files/${encodeURIComponent(filePath)}`
           )
         }
+        onFileDelete={(file) => setDeleteTarget(file)}
         searchQuery={search}
         onSearchChange={setSearch}
+      />
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title={t("files.delete_confirm_title")}
+        message={t("files.delete_confirm_message", { path: deleteTarget?.path })}
+        onConfirm={handleDeleteFile}
+        onCancel={() => setDeleteTarget(null)}
       />
     </div>
   );

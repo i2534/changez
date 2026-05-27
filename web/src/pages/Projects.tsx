@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { apiJSON } from "../api/client";
 import { Project } from "../api/types";
 import { toast } from "sonner";
+import ConfirmDialog from "../components/ConfirmDialog";
 
 export default function Projects() {
   const { t } = useTranslation();
@@ -11,6 +12,7 @@ export default function Projects() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
+  const [deleteTarget, setDeleteTarget] = useState<Project | null>(null);
 
   useEffect(() => {
     const abort = new AbortController();
@@ -23,6 +25,20 @@ export default function Projects() {
       .finally(() => setLoading(false));
     return () => abort.abort();
   }, [t]);
+
+  const handleDeleteProject = () => {
+    if (!deleteTarget) return;
+    const id = deleteTarget.id;
+    apiJSON<{ message: string }>(`/api/projects/${id}`, { method: "DELETE" })
+      .then(() => {
+        setProjects((prev) => prev.filter((p) => p.id !== id));
+        toast.success(t("projects.deleted_success"));
+      })
+      .catch((err) => {
+        toast.error(err instanceof Error ? err.message : t("projects.failed_to_delete"));
+      })
+      .finally(() => setDeleteTarget(null));
+  };
 
   const filtered = search.trim()
     ? projects.filter(
@@ -59,27 +75,49 @@ export default function Projects() {
       ) : (
         <div className="space-y-2">
           {filtered.map((project) => (
-            <button
-              key={project.id}
-              onClick={() =>
-                navigate(`/projects/${encodeURIComponent(project.name)}/files`)
-              }
-              className="flex w-full items-center justify-between rounded-lg bg-gray-800 px-4 py-3 text-left hover:bg-gray-700"
-            >
-              <div>
-                <div className="font-medium text-gray-100">{project.name}</div>
-                <div className="mt-0.5 text-xs text-gray-400">{project.rootPath}</div>
-                <div className="mt-0.5 text-xs text-gray-500">
-                  {t("projects.created")}: {new Date(project.createdAt).toLocaleDateString()}
+            <div key={project.id} className="flex rounded-lg bg-gray-800 hover:bg-gray-700">
+              <button
+                onClick={() =>
+                  navigate(`/projects/${encodeURIComponent(project.name)}/files`)
+                }
+                className="flex min-w-0 flex-1 items-center justify-between px-4 py-3 text-left"
+              >
+                <div className="min-w-0">
+                  <div className="truncate font-medium text-gray-100">{project.name}</div>
+                  <div className="mt-0.5 truncate text-xs text-gray-400">{project.rootPath}</div>
+                  <div className="mt-0.5 text-xs text-gray-500">
+                    {t("projects.created")}: {new Date(project.createdAt).toLocaleDateString()}
+                  </div>
                 </div>
-              </div>
-              <div className="flex-shrink-0 text-sm text-gray-400">
-                {t("projects.files_count", { count: project.fileCount })}
-              </div>
-            </button>
+                <div className="ml-4 flex-shrink-0 text-sm text-gray-400">
+                  {t("projects.files_count", { count: project.fileCount })}
+                </div>
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setDeleteTarget(project);
+                }}
+                className="flex items-center px-3 py-3 text-gray-600 transition-colors hover:bg-red-600/20 hover:text-red-400"
+                title={t("projects.delete")}
+              >
+                🗑
+              </button>
+            </div>
           ))}
         </div>
       )}
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title={t("projects.delete_confirm_title")}
+        message={t("projects.delete_confirm_message", {
+          name: deleteTarget?.name,
+          file_count: deleteTarget?.fileCount,
+        })}
+        onConfirm={handleDeleteProject}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   );
 }
