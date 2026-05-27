@@ -262,6 +262,26 @@ func (d *DB) ResolvePathsToProjects(ctx context.Context, paths []string) (map[st
 	return result, nil
 }
 
+// FindProjectByName 根据项目名称查找项目。
+func (d *DB) FindProjectByName(ctx context.Context, name string) (map[string]any, error) {
+	row := d.db.QueryRowContext(ctx, `
+		SELECT id, name, root_path, extra FROM projects WHERE name = ? AND is_deleted = 0 LIMIT 1
+	`, name)
+	var id int64
+	var rootPath, extra string
+	if err := row.Scan(&id, &name, &rootPath, &extra); err == nil {
+		return map[string]any{
+			"id":       id,
+			"name":     name,
+			"rootPath": rootPath,
+			"extra":    extra,
+		}, nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("query project by name: %w", err)
+	}
+	return nil, fmt.Errorf("project %q not found", name)
+}
+
 // FindProjectByPath 查找文件所属项目。
 // 先尝试通过 files 表的相对路径精确匹配（handler 场景），
 // 如果没找到则回退到 root_path 前缀匹配（snapshot/测试场景）。
@@ -271,7 +291,7 @@ func (d *DB) FindProjectByPath(ctx context.Context, path string) (map[string]any
 		SELECT p.id, p.name, p.root_path, p.extra
 		FROM files f
 		JOIN projects p ON f.project_id = p.id
-		WHERE f.path = ? AND p.is_deleted = 0
+		WHERE f.path = ? AND p.is_deleted = 0 AND f.is_deleted = 0
 		LIMIT 1
 	`, path)
 	var id int64
@@ -328,7 +348,7 @@ func (d *DB) FindProjectByPath(ctx context.Context, path string) (map[string]any
 // GetFileByPath 查询指定项目中指定路径的文件。
 func (d *DB) GetFileByPath(ctx context.Context, projectID int64, path string) (map[string]any, error) {
 	row := d.db.QueryRowContext(ctx,
-		"SELECT id, project_id, path, latest_version_id, created_at FROM files WHERE project_id = ? AND path = ?",
+		"SELECT id, project_id, path, latest_version_id, created_at FROM files WHERE project_id = ? AND path = ? AND is_deleted = 0",
 		projectID, path,
 	)
 	var id, projectID2 int64
@@ -347,16 +367,30 @@ func (d *DB) GetFileByPath(ctx context.Context, projectID int64, path string) (m
 }
 
 // UpsertFile 注册或更新文件记录。如果文件已存在则返回已有 ID，否则创建新记录。
+// 如果文件已被软删除（is_deleted=1），自动恢复（策略 A）。
 func (d *DB) UpsertFile(ctx context.Context, projectID int64, path string) (int64, error) {
+	// 先查活跃文件
 	var id int64
 	err := d.db.QueryRowContext(ctx,
-		"SELECT id FROM files WHERE project_id = ? AND path = ?",
+		"SELECT id FROM files WHERE project_id = ? AND path = ? AND is_deleted = 0",
 		projectID, path,
 	).Scan(&id)
 	if err == nil {
 		return id, nil
 	}
 
+	// 检查是否是已删除的文件，自动恢复
+	err = d.db.QueryRowContext(ctx,
+		"SELECT id FROM files WHERE project_id = ? AND path = ? AND is_deleted = 1",
+		projectID, path,
+	).Scan(&id)
+	if err == nil {
+		_, err := d.db.ExecContext(ctx,
+			"UPDATE files SET is_deleted = 0, deleted_at = NULL WHERE id = ?", id)
+		return id, err
+	}
+
+	// 新建文件
 	result, err := d.db.ExecContext(ctx,
 		"INSERT INTO files (project_id, path) VALUES (?, ?)",
 		projectID, path,
@@ -646,7 +680,7 @@ func (d *DB) ListSources(ctx context.Context) ([]map[string]any, error) {
 func (d *DB) ListProjects(ctx context.Context) ([]map[string]any, error) {
 	rows, err := d.db.QueryContext(ctx,
 		`SELECT p.id, p.name, p.root_path, p.extra, p.created_at,` +
-			` (SELECT COUNT(*) FROM files WHERE project_id = p.id) AS file_count` +
+			` (SELECT COUNT(*) FROM files WHERE project_id = p.id AND is_deleted = 0) AS file_count` +
 			` FROM projects p WHERE p.is_deleted = 0 ORDER BY p.name`,
 	)
 	if err != nil {
@@ -706,6 +740,173 @@ func (d *DB) SoftDeleteProject(ctx context.Context, id int64) error {
 		return fmt.Errorf("项目 %d 不存在或已删除", id)
 	}
 	return nil
+}
+
+// SoftDeleteFile 软删除文件。
+func (d *DB) SoftDeleteFile(ctx context.Context, fileID int64) error {
+	result, err := d.db.ExecContext(ctx,
+		"UPDATE files SET is_deleted = 1, deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND is_deleted = 0",
+		fileID,
+	)
+	if err != nil {
+		return fmt.Errorf("soft delete file: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("文件 %d 不存在或已删除", fileID)
+	}
+	return nil
+}
+
+// GetDeletedProjectIDs 获取已软删除的项目 ID 列表。
+func (d *DB) GetDeletedProjectIDs(ctx context.Context) ([]int64, error) {
+	rows, err := d.db.QueryContext(ctx, "SELECT id FROM projects WHERE is_deleted = 1")
+	if err != nil {
+		return nil, fmt.Errorf("query deleted projects: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan deleted project: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// GetDeletedFileIDs 获取已软删除的文件 ID 列表（排除属于软删项目的文件）。
+func (d *DB) GetDeletedFileIDs(ctx context.Context) ([]int64, error) {
+	rows, err := d.db.QueryContext(ctx, `
+		SELECT f.id FROM files f
+		WHERE f.is_deleted = 1
+		AND NOT EXISTS (SELECT 1 FROM projects p WHERE p.id = f.project_id AND p.is_deleted = 1)
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("query deleted files: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan deleted file: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// GetFilesByProject 获取项目下的所有文件 ID。
+func (d *DB) GetFilesByProject(ctx context.Context, projectID int64) ([]int64, error) {
+	rows, err := d.db.QueryContext(ctx,
+		"SELECT id FROM files WHERE project_id = ?", projectID)
+	if err != nil {
+		return nil, fmt.Errorf("query files by project: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan file: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// GetBlobHashesByFileIDs 获取指定文件的所有 blob_hash 引用。
+func (d *DB) GetBlobHashesByFileIDs(ctx context.Context, fileIDs []int64) ([]string, error) {
+	if len(fileIDs) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(fileIDs))
+	args := make([]any, len(fileIDs))
+	for i, id := range fileIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+
+	rows, err := d.db.QueryContext(ctx,
+		"SELECT DISTINCT blob_hash FROM versions WHERE file_id IN ("+strings.Join(placeholders, ",")+") AND storage_mode = 'blob' AND blob_hash IS NOT NULL",
+		args...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query blob hashes: %w", err)
+	}
+	defer rows.Close()
+
+	var hashes []string
+	for rows.Next() {
+		var hash string
+		if err := rows.Scan(&hash); err != nil {
+			return nil, fmt.Errorf("scan blob hash: %w", err)
+		}
+		hashes = append(hashes, hash)
+	}
+	return hashes, rows.Err()
+}
+
+// DeleteFiles 删除文件记录（CASCADE 自动删除关联的 versions）。
+func (d *DB) DeleteFiles(ctx context.Context, fileIDs []int64) error {
+	if len(fileIDs) == 0 {
+		return nil
+	}
+	placeholders := make([]string, len(fileIDs))
+	args := make([]any, len(fileIDs))
+	for i, id := range fileIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+
+	_, err := d.db.ExecContext(ctx,
+		"DELETE FROM files WHERE id IN ("+strings.Join(placeholders, ",")+")",
+		args...,
+	)
+	return err
+}
+
+// GetAllBlobHashes 查询 versions 表所有被引用的 blob hash。
+func (d *DB) GetAllBlobHashes(ctx context.Context) ([]string, error) {
+	rows, err := d.db.QueryContext(ctx, "SELECT DISTINCT blob_hash FROM versions WHERE blob_hash IS NOT NULL AND blob_hash != ''")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var hashes []string
+	for rows.Next() {
+		var h string
+		if err := rows.Scan(&h); err != nil {
+			continue
+		}
+		hashes = append(hashes, h)
+	}
+	return hashes, nil
+}
+
+// DeleteProjects 删除项目记录（不 CASCADE，只删 projects 行）。
+func (d *DB) DeleteProjects(ctx context.Context, projectIDs []int64) error {
+	if len(projectIDs) == 0 {
+		return nil
+	}
+	placeholders := make([]string, len(projectIDs))
+	args := make([]any, len(projectIDs))
+	for i, id := range projectIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+
+	_, err := d.db.ExecContext(ctx,
+		"DELETE FROM projects WHERE id IN ("+strings.Join(placeholders, ",")+")",
+		args...,
+	)
+	return err
 }
 
 // Query 执行任意查询，返回 *sql.Rows。调用者负责 Close。
@@ -808,7 +1009,7 @@ func (d *DB) GetStats(ctx context.Context) (map[string]any, error) {
 	stats["projects"] = projectCount
 
 	var fileCount int
-	if err := d.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM files").Scan(&fileCount); err != nil {
+	if err := d.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM files WHERE is_deleted = 0").Scan(&fileCount); err != nil {
 		return nil, err
 	}
 	stats["files"] = fileCount

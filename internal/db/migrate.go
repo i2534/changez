@@ -5,6 +5,7 @@ package db
 import (
 	"fmt"
 	"log/slog"
+	"strings"
 )
 
 type migration struct {
@@ -16,6 +17,7 @@ type migration struct {
 var allMigrations = []migration{
 	{1, "seed sources", seedSources},
 	{2, "rename claude-code to claudecode", migrateClaudeCode},
+	{3, "add files is_deleted and deleted_at", migrateFilesSoftDelete},
 }
 
 // RunMigrations 创建迁移跟踪表，按顺序执行未完成的迁移。
@@ -77,6 +79,22 @@ func migrateClaudeCode(d *DB) error {
 
 	if _, err := d.db.Exec("DELETE FROM sources WHERE name = 'claude-code'"); err != nil {
 		slog.Warn("failed to delete old source 'claude-code'", "error", err)
+	}
+	return nil
+}
+
+func migrateFilesSoftDelete(d *DB) error {
+	for _, sql := range []string{
+		"ALTER TABLE projects ADD COLUMN is_deleted BOOLEAN DEFAULT 0 NOT NULL",
+		"ALTER TABLE projects ADD COLUMN deleted_at TIMESTAMP",
+		"ALTER TABLE files ADD COLUMN is_deleted BOOLEAN DEFAULT 0 NOT NULL",
+		"ALTER TABLE files ADD COLUMN deleted_at TIMESTAMP",
+	} {
+		if _, err := d.db.Exec(sql); err != nil {
+			if !strings.Contains(err.Error(), "duplicate column") {
+				return fmt.Errorf("migrate soft delete: %w", err)
+			}
+		}
 	}
 	return nil
 }
