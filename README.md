@@ -8,7 +8,8 @@
 - **Delta 压缩存储** — 使用 diff-match-patch + zstd 压缩，大幅节省存储空间
 - **内容寻址** — SHA256 去重，相同内容只存储一次
 - **后台压缩** — 自动合并长 delta 链为 blob 检查点，保持读取性能
-- **Web 浏览** — React SPA 界面，支持文件树、版本时间线、diff 对比、代码高亮
+- **软删除 + 定时清理** — 项目/文件支持软删除，后台定时清理孤儿数据
+- **Web 浏览** — React SPA 界面，支持文件树、版本时间线、diff 对比、代码高亮、删除操作
 - **MCP 集成** — 内置 MCP 服务器，AI 工具可直接查询变更历史
 - **轻量部署** — 单二进制文件，SQLite + 文件系统存储，无需外部依赖
 
@@ -54,6 +55,9 @@ compact:
   enabled: true
   interval: "24h"
   max_delta_chain: 50
+cleanup:
+  enabled: true
+  interval: "168h"       # 一周清理一次
 log:
   level: "info"
   file: "changez.log"
@@ -108,6 +112,20 @@ curl "http://127.0.0.1:8760/api/files/diff?path=src%2Fmain.go&from=1&to=5" \
 
 ```bash
 curl "http://127.0.0.1:8760/api/files/restore?path=src%2Fmain.go&version=3" \
+  -H "Authorization: Bearer your-token"
+```
+
+### 删除文件（软删除）
+
+```bash
+curl -X DELETE "http://127.0.0.1:8760/api/files?project=myproject&path=src%2Fmain.go" \
+  -H "Authorization: Bearer your-token"
+```
+
+### 删除项目（软删除）
+
+```bash
+curl -X DELETE http://127.0.0.1:8760/api/projects/1 \
   -H "Authorization: Bearer your-token"
 ```
 
@@ -172,6 +190,11 @@ Changez 提供以下 MCP 工具：
 │  ┌────────▼─────────────────────────┐                    │
 │  │       Compactor (后台)           │                    │
 │  │  合并长 delta 链 → blob 检查点    │                    │
+│  └──────────────────────────────────┘                    │
+│           │                                               │
+│  ┌────────▼─────────────────────────┐                    │
+│  │       Cleanup (后台)             │                    │
+│  │  清理软删数据 + 孤儿 blob/delta   │                    │
 │  └──────────────────────────────────┘                    │
 └──────────────────────────────────────────────────────────┘
 ```
