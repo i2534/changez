@@ -14,6 +14,7 @@ type Config struct {
 	Token   string     `yaml:"token"`  // Bearer token 认证（为空则不认证）
 	Storage StorageCfg `yaml:"storage"`
 	Compact CompactCfg `yaml:"compact"`
+	Cleanup CleanupCfg `yaml:"cleanup"`
 	Log     LogCfg     `yaml:"log"`
 }
 
@@ -28,6 +29,12 @@ type CompactCfg struct {
 	Interval               string `yaml:"interval"`                 // 定时器间隔，如 "24h"
 	MaxDeltaChain          int    `yaml:"max_delta_chain"`          // 最大 delta 链长度，超过则 compact
 	DeltaCompressThreshold int    `yaml:"delta_compress_threshold"` // delta 压缩阈值（字节），低于此值不压缩
+}
+
+// CleanupCfg 定时清理配置。
+type CleanupCfg struct {
+	Enabled  bool   `yaml:"enabled"`
+	Interval string `yaml:"interval"` // 定时器间隔，如 "24h"
 }
 
 // LogCfg 日志配置。
@@ -49,6 +56,10 @@ func Defaults() Config {
 			Interval:               "24h",
 			MaxDeltaChain:          50,
 			DeltaCompressThreshold: 512,
+		},
+		Cleanup: CleanupCfg{
+			Enabled:  true,
+			Interval: "24h",
 		},
 		Log: LogCfg{
 			Level: "info",

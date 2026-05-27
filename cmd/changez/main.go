@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/changez/changez/internal/compact"
+	"github.com/changez/changez/internal/cleanup"
 	"github.com/changez/changez/internal/config"
 	"github.com/changez/changez/internal/db"
 	"github.com/changez/changez/internal/handler"
@@ -79,6 +80,7 @@ func main() {
 	defer loggerWrapper.Close()
 	logger := loggerWrapper.Logger
 	compactor := compact.New(database, blobStore, deltaStore, &cfg.Compact, logger, fileMuMap)
+	cleaner := cleanup.New(database, blobStore, deltaStore, &cfg.Cleanup, logger, fileMuMap)
 	httpRouter := router.New(database, blobStore, deltaStore, &cfg, cfg.Token, fileMuMap, compactor, logger, webFS)
 
 	srv := &http.Server{
@@ -93,6 +95,7 @@ func main() {
 	defer stop()
 
 	go compactor.Run(ctx)
+	go cleaner.Run(ctx)
 
 	errChan := make(chan error, 1)
 	go func() {
