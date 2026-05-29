@@ -21,11 +21,13 @@ async function registerProject(workspaceRoot) {
         body: JSON.stringify({ rootPath: workspaceRoot, name: projectName }),
         signal: AbortSignal.timeout(5000),
       });
-      if (resp.ok || resp.status === 409) return;
-    } catch (_) {}
-    if (i < 2) await new Promise((r) => setTimeout(r, 500 * (i + 1)));
+      if (resp.ok || resp.status === 409) return { status: "registered", code: resp.status };
+      if (i < 2) await new Promise((r) => setTimeout(r, 500 * (i + 1)));
+    } catch (_) {
+      if (i < 2) await new Promise((r) => setTimeout(r, 500 * (i + 1)));
+    }
   }
-  console.error(`[changez] project registration exhausted retries for ${workspaceRoot}`);
+  return { status: "failed", attempts: 3 };
 }
 
 async function main() {
@@ -35,12 +37,13 @@ async function main() {
   }
   const input = JSON.parse(inputText);
 
-  const workspaceRoot = input.workspace_roots[0];
+  const workspaceRoot = input.workspace_roots?.[0];
   const sessionId = input.session_id;
   const model = input.model;
 
+  let projectResult = { status: "skipped" };
   if (workspaceRoot) {
-    await registerProject(workspaceRoot);
+    projectResult = await registerProject(workspaceRoot);
   }
 
   const output = {
@@ -51,11 +54,19 @@ async function main() {
       CHANGEZ_SESSION_ID: sessionId,
       CHANGEZ_MODEL: model,
     },
+    changez: {
+      project: projectResult,
+      workspaceRoot,
+      sessionId,
+    },
   };
   process.stdout.write(JSON.stringify(output) + "\n");
 }
 
 main().catch((err) => {
-  console.error("[changez] session-init failed", err.message);
-  process.stdout.write('{"env": {}}\n');
+  console.error(`[changez] session-init failed: ${err.message}`);
+  process.stdout.write(JSON.stringify({
+    env: {},
+    changez: { error: err.message },
+  }) + "\n");
 });

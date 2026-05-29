@@ -36,15 +36,21 @@ async function main() {
   const sessionId = input.conversation_id;
   const model = input.model;
 
+  if (!filePath) {
+    process.stdout.write(JSON.stringify({ status: "skipped", reason: "no file_path" }) + "\n");
+    process.exit(0);
+  }
+
   let content;
   try {
     content = readFileSync(filePath, "utf8");
   } catch (e) {
-    console.error(`[changez] failed to read ${filePath}: ${e.message}`);
+    process.stdout.write(JSON.stringify({ status: "error", reason: "read_failed", file: filePath, error: e.message }) + "\n");
     process.exit(0);
   }
 
   if (Buffer.byteLength(content, "utf8") > MAX_FILE_SIZE) {
+    process.stdout.write(JSON.stringify({ status: "skipped", reason: "file_too_large", file: filePath }) + "\n");
     process.exit(0);
   }
 
@@ -66,11 +72,28 @@ async function main() {
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(5000),
   });
-  if (!resp || !resp.ok) {
-    console.error(`[changez] snapshot failed: ${resp ? resp.status : "no response"}`);
+
+  if (resp && resp.ok) {
+    let detail = {};
+    try { detail = await resp.json(); } catch (_) {}
+    process.stdout.write(JSON.stringify({
+      status: "ok",
+      file: filePath,
+      httpStatus: resp.status,
+      ...detail,
+    }) + "\n");
+  } else {
+    const errorMsg = resp ? `HTTP ${resp.status}` : "no response";
+    console.error(`[changez] snapshot failed: ${errorMsg}`);
+    process.stdout.write(JSON.stringify({
+      status: "error",
+      file: filePath,
+      reason: errorMsg,
+    }) + "\n");
   }
 }
 
 main().catch((e) => {
   console.error(`[changez] report.js error: ${e.message}`);
+  process.stdout.write(JSON.stringify({ status: "error", error: e.message }) + "\n");
 });

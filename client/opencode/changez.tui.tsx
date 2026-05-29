@@ -8,8 +8,7 @@
 // 配对文件：changez.server.ts（核心 Server 插件）
 //
 // 安装方式：
-//   全局：~/.config/opencode/tui-plugins/changez.tui.tsx
-//   项目级：{project}/.opencode/tui-plugins/changez.tui.tsx
+//   安装位置：~/.opencode/changez/changez.tui.tsx
 //
 // 配置（tui.json）：
 //   {

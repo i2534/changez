@@ -7,8 +7,7 @@
 // 配对文件：changez.tui.tsx（可选 TUI 状态展示插件）
 //
 // 安装方式：
-//   全局：~/.config/opencode/plugins/changez.server.ts
-//   项目级：{project}/.opencode/plugins/changez.server.ts
+//   安装位置：~/.opencode/changez/changez.server.ts
 
 import * as fs from "node:fs";
 import * as path from "node:path";
