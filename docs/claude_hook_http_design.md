@@ -25,7 +25,7 @@ DSV4 代码审查后决定搁置此方案，原因如下：
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│  Claude Code / wps_claude                           │
+│  Claude Code                                        │
 │                                                     │
 │  AI ──Write/Edit──▶ Tool Execution                  │
 │                      │                              │
@@ -70,7 +70,7 @@ DSV4 代码审查后决定搁置此方案，原因如下：
 ### 配置格式
 
 ```jsonc
-// ~/.wps_claude/settings.json
+// ~/.claude/settings.json
 {
   "hooks": {
     "PostToolUse": [
@@ -180,7 +180,7 @@ async function processHook(hook) {
 ### 方式 A：HTTP Hook（推荐）
 
 ```jsonc
-// ~/.wps_claude/settings.json
+// ~/.claude/settings.json
 {
   "env": {
     "CHANGEZ_TOKEN": "HelloChangez",
@@ -221,7 +221,7 @@ async function processHook(hook) {
 ### 方式 B：Command Hook（兼容）
 
 ```jsonc
-// ~/.wps_claude/settings.json
+// ~/.claude/settings.json
 {
   "hooks": {
     "PostToolUse": [

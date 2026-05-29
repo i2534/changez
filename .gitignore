@@ -10,6 +10,7 @@ data/
 
 # OpenCode
 .opencode/
+.codegraph/
 /AGENTS.md
 
 # IDE

@@ -2,7 +2,7 @@
 "use strict"
 
 /**
- * changez-hook — Claude Code / wps_claude 统一 hook 脚本
+ * changez-hook — Claude Code 统一 hook 脚本
  *
  * 通过 stdin 接收 hook JSON，零外部依赖（仅 Node.js 内置模块）。
  * fire-and-forget，始终 exit 0。

@@ -1,6 +1,6 @@
 # Changez
 
-代码变更版本化服务器。为 AI 编程工具（OpenCode、ClaudeCode、Cursor 等）提供文件变更的自动追踪、版本管理和差异对比。
+代码变更版本化服务器。为 AI 编程工具（OpenCode、Claude Code、Cursor 等）提供文件变更的自动追踪、版本管理和差异对比。
 
 ## 核心特性
 
@@ -62,6 +62,52 @@ log:
   level: "info"
   file: "changez.log"
 ```
+
+## 客户端集成
+
+Changez 提供三个 AI 编程工具的客户端集成，均支持一键安装：
+
+### OpenCode
+
+通过 OpenCode 插件系统自动追踪文件变更。
+
+```bash
+cd client/opencode
+bash setup.sh --url http://127.0.0.1:8760 --token your-token
+```
+
+- **Server 插件**（必需）— 拦截文件修改工具，自动上报快照
+- **TUI 插件**（可选）— 侧边栏实时显示 Changez 状态
+
+详见 [client/opencode/README.md](client/opencode/README.md)
+
+### Claude Code
+
+通过 hook 机制自动追踪 Claude Code 的文件变更。
+
+```bash
+cd client/claudecode
+bash setup.sh --url http://127.0.0.1:8760 --token your-token
+```
+
+- **stdin hook**（推荐）— Claude Code 通过管道传入 JSON，脚本 fire-and-forget 上报
+- **daemon HTTP** — 独立 HTTP 服务接收 hook 请求，异步处理
+
+详见 [client/claudecode/README.md](client/claudecode/README.md)
+
+### Cursor
+
+通过 Cursor 原生 Hooks 系统自动追踪文件变更。
+
+```bash
+cd client/cursor
+bash setup.sh --url http://127.0.0.1:8760 --token your-token
+```
+
+- **sessionStart** — 注册项目 + 注入环境变量
+- **afterFileEdit** — 文件编辑后上报快照
+
+详见 [client/cursor/README.md](client/cursor/README.md)
 
 ## API 使用
 
@@ -128,24 +174,6 @@ curl -X DELETE "http://127.0.0.1:8760/api/files?project=myproject&path=src%2Fmai
 curl -X DELETE http://127.0.0.1:8760/api/projects/1 \
   -H "Authorization: Bearer your-token"
 ```
-
-## Hook 集成
-
-### ClaudeCode / wps_claude
-
-```bash
-# 设置环境变量
-export CHANGEZ_URL="http://127.0.0.1:8760"
-export CHANGEZ_TOKEN="your-token"
-export CHANGEZ_SOURCE="claudecode"
-
-# 在 ClaudeCode 配置中使用 hook
-# hook 脚本：client/claudecode/changez-hook.js
-```
-
-### OpenCode
-
-通过 MCP 服务器集成，配置 MCP server 指向 `http://127.0.0.1:8760/mcp`。
 
 ## MCP 工具
 

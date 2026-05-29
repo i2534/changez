@@ -707,14 +707,14 @@ TUI 端（`changez.tui.ts`）：
 
 ---
 
-## Round 49 — Claude Code (wps_claude) 接入方案设计
+## Round 49 — Claude Code 接入方案设计
 
-**用户:** 调研 Claude Code / wps_claude 如何接入 changez。
+**用户:** 调研 Claude Code 如何接入 changez。
 
 **调研方法:**
-1. 找到 wps_claude 安装位置：`~/.local/bin/wps_claude` → `~/.wps-claudecode/dist/cli.js`（11MB 编译产物）
+1. 找到 Claude Code 安装位置：`~/.local/bin/claude` → `~/.claude/dist/cli.js`（11MB 编译产物）
 2. 对 cli.js 进行逆向分析，发现完整 hooks 系统
-3. 确认 wps_claude 是 Claude Code 逆向恢复版本，支持 hooks 配置
+3. 确认该版本是 Claude Code 逆向恢复版本，支持 hooks 配置
 
 **关键发现 — Claude Code Hooks 系统：**
 
@@ -748,7 +748,7 @@ TUI 端（`changez.tui.ts`）：
 2. Edit 工具的 tool_input 是 diff 还是完整 content
 3. Hook 超时后 AI 是否等待还是跳过
 4. --bare 模式对 hooks 的影响范围
-5. wps_claude 逆向版本 hooks 功能是否完整
+5. 该逆向版本 hooks 功能是否完整
 
 ---
 
@@ -759,7 +759,7 @@ TUI 端（`changez.tui.ts`）：
 **完成事项：**
 1. 自动化测试脚本 `test-hook.sh`（10/10 通过）
 2. 进程内重试机制（指数退避 500ms/1000ms）
-3. 实机验证 wps_claude → hook → changez 完整链路
+3. 实机验证 Claude Code → hook → changez 完整链路
 4. HTTP daemon 方案设计与实现（`changez-daemon.js`）
 
 **DSV4 Review 发现：**
