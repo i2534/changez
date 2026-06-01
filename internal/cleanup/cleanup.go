@@ -188,6 +188,8 @@ func (c *Cleanup) cleanupOrphanBlobs(ctx context.Context) error {
 }
 
 // cleanupOrphanDeltas 清理无主的 delta 文件。
+// 基于 versions 表的 storage_mode='delta' 记录判断，而非 files 表存在性。
+// 这样可以清理 compactor 转换后残留的孤立 delta 文件（file_id 仍存在，但所有 delta 版本已转为 blob）。
 func (c *Cleanup) cleanupOrphanDeltas(ctx context.Context) error {
 	deltasDir := c.deltaStore.Dir()
 	entries, err := os.ReadDir(deltasDir)
@@ -198,17 +200,19 @@ func (c *Cleanup) cleanupOrphanDeltas(ctx context.Context) error {
 		return fmt.Errorf("read deltas dir: %w", err)
 	}
 
-	rows, err := c.db.Query(ctx, "SELECT id FROM files")
+	rows, err := c.db.Query(ctx, `
+		SELECT DISTINCT file_id FROM versions WHERE storage_mode='delta'
+	`)
 	if err != nil {
-		return fmt.Errorf("query file ids: %w", err)
+		return fmt.Errorf("query delta file ids: %w", err)
 	}
-	fileIDs := make(map[int64]bool)
+	deltaFileIDs := make(map[int64]bool)
 	for rows.Next() {
 		var id int64
 		if err := rows.Scan(&id); err != nil {
 			continue
 		}
-		fileIDs[id] = true
+		deltaFileIDs[id] = true
 	}
 	rows.Close()
 
@@ -218,7 +222,7 @@ func (c *Cleanup) cleanupOrphanDeltas(ctx context.Context) error {
 		}
 		var fileID int64
 		fmt.Sscanf(entry.Name(), "%d.delta", &fileID)
-		if !fileIDs[fileID] {
+		if !deltaFileIDs[fileID] {
 			path := filepath.Join(deltasDir, entry.Name())
 			if err := os.Remove(path); err != nil {
 				c.Logger.Warn("remove orphan delta failed", "path", path, "error", err)
