@@ -18,6 +18,7 @@ var allMigrations = []migration{
 	{1, "seed sources", seedSources},
 	{2, "rename claude-code to claudecode", migrateClaudeCode},
 	{3, "add files is_deleted and deleted_at", migrateFilesSoftDelete},
+	{4, "add versions session_id, model, message", migrateVersionsMetadata},
 }
 
 // RunMigrations 创建迁移跟踪表，按顺序执行未完成的迁移。
@@ -93,6 +94,21 @@ func migrateFilesSoftDelete(d *DB) error {
 		if _, err := d.db.Exec(sql); err != nil {
 			if !strings.Contains(err.Error(), "duplicate column") {
 				return fmt.Errorf("migrate soft delete: %w", err)
+			}
+		}
+	}
+	return nil
+}
+
+func migrateVersionsMetadata(d *DB) error {
+	for _, sql := range []string{
+		"ALTER TABLE versions ADD COLUMN session_id TEXT",
+		"ALTER TABLE versions ADD COLUMN model TEXT",
+		"ALTER TABLE versions ADD COLUMN message TEXT",
+	} {
+		if _, err := d.db.Exec(sql); err != nil {
+			if !strings.Contains(err.Error(), "duplicate column") {
+				return fmt.Errorf("migrate versions metadata: %w", err)
 			}
 		}
 	}

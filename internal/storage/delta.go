@@ -82,7 +82,7 @@ func decompressZstd(data []byte) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func (s *DeltaStore) Append(fileID, versionID int64, diffs []diffmatchpatch.Diff, meta *DeltaMeta, threshold int) (int64, bool, error) {
+func (s *DeltaStore) Append(fileID, versionID int64, diffs []diffmatchpatch.Diff, threshold int) (int64, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -102,15 +102,6 @@ func (s *DeltaStore) Append(fileID, versionID int64, diffs []diffmatchpatch.Diff
 			diffData = c
 			compressed = true
 		}
-	}
-
-	var metaBytes []byte
-	if meta != nil {
-		mb, err := json.Marshal(meta)
-		if err != nil {
-			return 0, false, fmt.Errorf("serialize delta meta: %w", err)
-		}
-		metaBytes = mb
 	}
 
 	header := make([]byte, DeltaHeaderSize)
@@ -136,17 +127,10 @@ func (s *DeltaStore) Append(fileID, versionID int64, diffs []diffmatchpatch.Diff
 	buf.Write(header)
 	buf.Write(diffData)
 
-	if len(metaBytes) > 0 {
-		metaHeader := make([]byte, 4)
-		binary.BigEndian.PutUint32(metaHeader[0:4], uint32(len(metaBytes)))
-		metaHeader[0] |= DeltaMetaFlagMask
-		buf.Write(metaHeader)
-		buf.Write(metaBytes)
-	} else {
-		metaHeader := make([]byte, 4)
-		binary.BigEndian.PutUint32(metaHeader[0:4], 0)
-		buf.Write(metaHeader)
-	}
+	// Always write 4-byte zero meta header (flag=0, no meta payload)
+	metaHeader := make([]byte, 4)
+	binary.BigEndian.PutUint32(metaHeader[0:4], 0)
+	buf.Write(metaHeader)
 
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {

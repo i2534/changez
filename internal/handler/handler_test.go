@@ -877,65 +877,6 @@ func TestProcessDiff_DeleteVersion(t *testing.T) {
 	assert.Contains(t, err.Error(), "deleted")
 }
 
-// ========== readDeltaMeta Tests ==========
-
-func TestReadDeltaMeta_NonDelta(t *testing.T) {
-	h, dbObj, _, _ := setupTest(t)
-	createProject(t, h)
-
-	// Blob version should return nil meta
-	sourceID, err := dbObj.GetSourceIDByName(context.Background(), "human")
-	require.NoError(t, err)
-
-	// Get fileID
-	project, err := dbObj.FindProjectByPath(context.Background(), "/home/user/proj/main.go")
-	require.NoError(t, err)
-	fileID, err := dbObj.UpsertFile(context.Background(), project["id"].(int64), "main.go")
-	require.NoError(t, err)
-
-	hash := "abc123"
-	versionID, err := dbObj.CreateVersion(context.Background(), fileID, "blob", &hash, nil, nil, "create", sourceID)
-	require.NoError(t, err)
-
-	meta, err := h.readDeltaMeta(context.Background(), fileID, versionID)
-	require.NoError(t, err)
-	assert.Nil(t, meta)
-}
-
-func TestReadDeltaMeta_WithMeta(t *testing.T) {
-	h, _, _, _ := setupTest(t)
-	createProject(t, h)
-
-	// Create a snapshot with meta -> delta version
-	req := &SnapshotRequest{Source: "human", SessionID: "sess-1", Model: "claude",
-		Files: []SnapshotFile{{Path: "/home/user/proj/main.go", Content: "v1"}}}
-	results := h.ProcessSnapshot(context.Background(), req)
-	require.Len(t, results, 1)
-	require.Equal(t, "captured", results[0].Status)
-	// First snapshot is blob, not delta, so meta won't be in delta entry
-	// Create second snapshot to get a delta with meta
-	req2 := &SnapshotRequest{Source: "human", SessionID: "sess-2", Model: "gpt4",
-		Files: []SnapshotFile{{Path: "/home/user/proj/main.go", Content: "v2 content updated"}}}
-	results2 := h.ProcessSnapshot(context.Background(), req2)
-	require.Len(t, results2, 1)
-	require.Equal(t, "captured", results2[0].Status)
-
-	// Get file info
-	dbObj := h.DB
-	project, err := dbObj.FindProjectByPath(context.Background(), "/home/user/proj/main.go")
-	require.NoError(t, err)
-	file, err := dbObj.GetFileByPath(context.Background(), project["id"].(int64), "main.go")
-	require.NoError(t, err)
-	fileID := file["id"].(int64)
-	v2ID := *results2[0].VersionID
-
-	meta, err := h.readDeltaMeta(context.Background(), fileID, v2ID)
-	require.NoError(t, err)
-	require.NotNil(t, meta)
-	assert.Equal(t, "sess-2", meta.SessionID)
-	assert.Equal(t, "gpt4", meta.Model)
-}
-
 // ========== rebuildFromDeltaChain Tests ==========
 
 func TestRebuildFromDeltaChain(t *testing.T) {

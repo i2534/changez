@@ -6,8 +6,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-
-	"github.com/changez/changez/internal/storage"
 )
 
 func (h *Handler) HandleLog(w http.ResponseWriter, r *http.Request) {
@@ -135,16 +133,14 @@ func (h *Handler) doLog(ctx context.Context, path string, sourceID *int64, actio
 			Source:    v["source"].(string),
 			Action:    v["action"].(string),
 		}
-
-		if v["storageMode"].(string) == "delta" {
-			meta, err := h.readDeltaMeta(ctx, fileID, v["versionId"].(int64))
-			if err != nil {
-				h.Logger.Warn("failed to read delta meta", "version_id", v["versionId"].(int64), "error", err)
-			} else if meta != nil {
-				entry.SessionID = meta.SessionID
-				entry.Model = meta.Model
-				entry.Message = meta.Message
-			}
+		if s := toString(v["sessionId"]); s != "" {
+			entry.SessionID = s
+		}
+		if m := toString(v["model"]); m != "" {
+			entry.Model = m
+		}
+		if msg := toString(v["message"]); msg != "" {
+			entry.Message = msg
 		}
 
 		resultVersions = append(resultVersions, entry)
@@ -156,25 +152,20 @@ func (h *Handler) doLog(ctx context.Context, path string, sourceID *int64, actio
 	}, total, nil
 }
 
-func (h *Handler) readDeltaMeta(ctx context.Context, fileID, versionID int64) (*storage.DeltaMeta, error) {
-	ver, err := h.DB.GetVersion(ctx, versionID)
-	if err != nil {
-		return nil, err
+// toString safely extracts a string value from an interface{} that may be
+// *string (from DB query), string (from migration), or nil.
+func toString(v any) string {
+	if v == nil {
+		return ""
 	}
-
-	if ver["storageMode"].(string) != "delta" {
-		return nil, nil
+	switch s := v.(type) {
+	case string:
+		return s
+	case *string:
+		if s == nil {
+			return ""
+		}
+		return *s
 	}
-
-	offset, ok := asInt64Ptr(ver["deltaOffset"])
-	if !ok {
-		return nil, nil
-	}
-
-	_, _, meta, err := h.DeltaStore.ReadEntry(fileID, offset)
-	if err != nil {
-		return nil, err
-	}
-
-	return meta, nil
+	return ""
 }

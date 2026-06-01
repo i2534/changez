@@ -72,7 +72,7 @@ func TestCleanupOnce_DeletedProject(t *testing.T) {
 	require.NoError(t, err)
 	blobHash := hash
 	offset := int64(0)
-	_, err = d.CreateVersion(ctx, fileID, "blob", &blobHash, &offset, nil, "update", 1)
+	_, err = d.CreateVersion(ctx, fileID, "blob", &blobHash, &offset, nil, "update", 1, "", "", "")
 	require.NoError(t, err)
 
 	deltaPath := filepath.Join(ds.Dir(), fmt.Sprintf("%d.delta", fileID))
@@ -111,7 +111,7 @@ func TestCleanupOnce_DeletedFile(t *testing.T) {
 	require.NoError(t, err)
 	blobHash := hash
 	offset := int64(0)
-	_, err = d.CreateVersion(ctx, fileID, "blob", &blobHash, &offset, nil, "update", 1)
+	_, err = d.CreateVersion(ctx, fileID, "blob", &blobHash, &offset, nil, "update", 1, "", "", "")
 	require.NoError(t, err)
 
 	deltaPath := filepath.Join(ds.Dir(), fmt.Sprintf("%d.delta", fileID))
@@ -186,9 +186,9 @@ func TestCleanupOnce_SharedBlob(t *testing.T) {
 
 	blobHash := hash
 	offset := int64(0)
-	_, err = d.CreateVersion(ctx, fileID1, "blob", &blobHash, &offset, nil, "update", 1)
+	_, err = d.CreateVersion(ctx, fileID1, "blob", &blobHash, &offset, nil, "update", 1, "", "", "")
 	require.NoError(t, err)
-	_, err = d.CreateVersion(ctx, fileID2, "blob", &blobHash, &offset, nil, "update", 1)
+	_, err = d.CreateVersion(ctx, fileID2, "blob", &blobHash, &offset, nil, "update", 1, "", "", "")
 	require.NoError(t, err)
 
 	err = d.SoftDeleteFile(ctx, fileID1)

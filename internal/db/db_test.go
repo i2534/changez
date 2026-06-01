@@ -270,7 +270,7 @@ func TestCreateVersion_CreatesAndReturnsID(t *testing.T) {
 	fileID, _ := db.UpsertFile(context.Background(), projectID, "/project/src/main.go")
 
 	blobHash := "abc123"
-	versionID, err := db.CreateVersion(context.Background(), fileID, "blob", &blobHash, nil, nil, "update", 1)
+	versionID, err := db.CreateVersion(context.Background(), fileID, "blob", &blobHash, nil, nil, "update", 1, "", "", "")
 	require.NoError(t, err)
 	assert.Greater(t, versionID, int64(0))
 }
@@ -281,7 +281,7 @@ func TestGetVersion_ReturnsCorrectVersion(t *testing.T) {
 	fileID, _ := db.UpsertFile(context.Background(), projectID, "/project/src/main.go")
 
 	blobHash := "hash123"
-	versionID, err := db.CreateVersion(context.Background(), fileID, "blob", &blobHash, nil, nil, "create", 1)
+	versionID, err := db.CreateVersion(context.Background(), fileID, "blob", &blobHash, nil, nil, "create", 1, "", "", "")
 	require.NoError(t, err)
 
 	version, err := db.GetVersion(context.Background(), versionID)
@@ -311,7 +311,7 @@ func TestCreateVersion_UpdateLatestVersion_GetLatestVersion_Chain(t *testing.T) 
 
 	// 创建版本
 	blobHash := "hash1"
-	versionID, err := db.CreateVersion(context.Background(), fileID, "blob", &blobHash, nil, nil, "update", 1)
+	versionID, err := db.CreateVersion(context.Background(), fileID, "blob", &blobHash, nil, nil, "update", 1, "", "", "")
 	require.NoError(t, err)
 
 	// 更新 latest_version_id
@@ -330,7 +330,7 @@ func TestUpdateVersionStorage_UpdatesFields(t *testing.T) {
 	projectID := createTestProject(t, db, "test-project", "/project")
 	fileID, _ := db.UpsertFile(context.Background(), projectID, "/project/src/main.go")
 
-	versionID, _ := db.CreateVersion(context.Background(), fileID, "blob", nil, nil, nil, "update", 1)
+	versionID, _ := db.CreateVersion(context.Background(), fileID, "blob", nil, nil, nil, "update", 1, "", "", "")
 
 	// 更新存储信息
 	newBlobHash := "newhash"
@@ -353,7 +353,7 @@ func TestListVersions_ReturnsOrderedByChangedAtDesc(t *testing.T) {
 
 	// 创建多个版本
 	for i := 0; i < 3; i++ {
-		_, err := db.CreateVersion(context.Background(), fileID, "blob", nil, nil, nil, "update", 1)
+		_, err := db.CreateVersion(context.Background(), fileID, "blob", nil, nil, nil, "update", 1, "", "", "")
 		require.NoError(t, err)
 	}
 
@@ -371,8 +371,8 @@ func TestListVersions_FiltersBySourceID(t *testing.T) {
 	fileID, _ := db.UpsertFile(context.Background(), projectID, "/project/src/main.go")
 
 	// 创建不同 source 的版本
-	_, _ = db.CreateVersion(context.Background(), fileID, "blob", nil, nil, nil, "update", 1) // opencode
-	_, _ = db.CreateVersion(context.Background(), fileID, "blob", nil, nil, nil, "update", 2) // claudecode
+	_, _ = db.CreateVersion(context.Background(), fileID, "blob", nil, nil, nil, "update", 1, "", "", "") // opencode
+	_, _ = db.CreateVersion(context.Background(), fileID, "blob", nil, nil, nil, "update", 2, "", "", "") // claudecode
 
 	sourceID := int64(1)
 	versions, err := db.ListVersions(context.Background(), fileID, &sourceID, nil, nil, nil, 10, 0)
@@ -387,9 +387,9 @@ func TestListVersions_FiltersByAction(t *testing.T) {
 	fileID, _ := db.UpsertFile(context.Background(), projectID, "/project/src/main.go")
 
 	// 创建不同 action 的版本
-	_, _ = db.CreateVersion(context.Background(), fileID, "blob", nil, nil, nil, "create", 1)
-	_, _ = db.CreateVersion(context.Background(), fileID, "blob", nil, nil, nil, "update", 1)
-	_, _ = db.CreateVersion(context.Background(), fileID, "blob", nil, nil, nil, "delete", 1)
+	_, _ = db.CreateVersion(context.Background(), fileID, "blob", nil, nil, nil, "create", 1, "", "", "")
+	_, _ = db.CreateVersion(context.Background(), fileID, "blob", nil, nil, nil, "update", 1, "", "", "")
+	_, _ = db.CreateVersion(context.Background(), fileID, "blob", nil, nil, nil, "delete", 1, "", "", "")
 
 	action := "update"
 	versions, err := db.ListVersions(context.Background(), fileID, nil, &action, nil, nil, 10, 0)
@@ -405,7 +405,7 @@ func TestListVersions_SupportsPagination(t *testing.T) {
 
 	// 创建 5 个版本
 	for i := 0; i < 5; i++ {
-		_, err := db.CreateVersion(context.Background(), fileID, "blob", nil, nil, nil, "update", 1)
+		_, err := db.CreateVersion(context.Background(), fileID, "blob", nil, nil, nil, "update", 1, "", "", "")
 		require.NoError(t, err)
 	}
 
@@ -437,7 +437,7 @@ func TestCountVersions_ReturnsCorrectCount(t *testing.T) {
 
 	// 创建版本
 	for i := 0; i < 3; i++ {
-		_, err := db.CreateVersion(context.Background(), fileID, "blob", nil, nil, nil, "update", 1)
+		_, err := db.CreateVersion(context.Background(), fileID, "blob", nil, nil, nil, "update", 1, "", "", "")
 		require.NoError(t, err)
 	}
 
@@ -509,8 +509,8 @@ func TestGetStats_ReturnsCorrectCounts(t *testing.T) {
 	fileID, _ := db.UpsertFile(context.Background(), projectID, "/project/src/main.go")
 
 	// 创建版本
-	_, _ = db.CreateVersion(context.Background(), fileID, "blob", nil, nil, nil, "update", 1)
-	_, _ = db.CreateVersion(context.Background(), fileID, "blob", nil, nil, nil, "update", 2)
+	_, _ = db.CreateVersion(context.Background(), fileID, "blob", nil, nil, nil, "update", 1, "", "", "")
+	_, _ = db.CreateVersion(context.Background(), fileID, "blob", nil, nil, nil, "update", 2, "", "", "")
 
 	stats, err := db.GetStats(context.Background())
 	require.NoError(t, err)

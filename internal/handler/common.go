@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -112,6 +113,44 @@ func NewLogger(cfg *config.Config) *LoggerWrapper {
 		Logger: slog.New(h),
 		file:   f,
 	}
+}
+
+// MigrateMetadataToDB 将 delta 文件中存储的 session_id、model、message 元数据
+// 回填到 versions 表中。阻塞调用，迁移完成前不返回。
+func (h *Handler) MigrateMetadataToDB(ctx context.Context) {
+	deltaVersions, err := h.DB.ListDeltaVersions(ctx)
+	if err != nil {
+		h.Logger.Warn("metadata migration: list delta versions failed", "error", err)
+		return
+	}
+	migrated, skipped := 0, 0
+	for _, v := range deltaVersions {
+		if v["session_id"] != nil || v["model"] != nil || v["message"] != nil {
+			skipped++
+			continue
+		}
+		deltaOffsetPtr := v["deltaOffset"].(*int64)
+		if deltaOffsetPtr == nil {
+			continue
+		}
+		offset := *deltaOffsetPtr
+		fileID := v["fileID"].(int64)
+		_, _, meta, err := h.DeltaStore.ReadEntry(fileID, offset)
+		if err != nil {
+			h.Logger.Warn("metadata migration: read delta failed", "version_id", v["id"], "error", err)
+			continue
+		}
+		if meta != nil && (meta.SessionID != "" || meta.Model != "" || meta.Message != "") {
+			if err := h.DB.UpdateVersionMeta(ctx, v["id"].(int64), meta.SessionID, meta.Model, meta.Message); err != nil {
+				h.Logger.Warn("metadata migration: update failed", "version_id", v["id"], "error", err)
+				continue
+			}
+			migrated++
+		} else {
+			skipped++
+		}
+	}
+	h.Logger.Info("metadata migration complete", "migrated", migrated, "skipped", skipped)
 }
 
 func (h *Handler) tryCompact(fileID int64) {

@@ -35,7 +35,8 @@ func setupRouter(t *testing.T) http.Handler {
 	logger := loggerWrapper.Logger
 	compactor := compact.New(database, bs, ds, &cfg.Compact, logger, fileMuMap)
 
-	return New(database, bs, ds, &cfg, "", fileMuMap, compactor, logger, nil)
+	h, _ := New(database, bs, ds, &cfg, "", fileMuMap, compactor, logger, nil)
+	return h
 }
 
 func setupRouterWithToken(t *testing.T, token string) http.Handler {
@@ -58,7 +59,8 @@ func setupRouterWithToken(t *testing.T, token string) http.Handler {
 	logger := loggerWrapper.Logger
 	compactor := compact.New(database, bs, ds, &cfg.Compact, logger, fileMuMap)
 
-	return New(database, bs, ds, &cfg, token, fileMuMap, compactor, logger, nil)
+	h, _ := New(database, bs, ds, &cfg, token, fileMuMap, compactor, logger, nil)
+	return h
 }
 
 func createProjectViaRouter(t *testing.T, router http.Handler) {

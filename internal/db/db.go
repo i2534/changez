@@ -459,11 +459,12 @@ func (d *DB) CreateVersion(
 	baseID *int64,
 	action string,
 	sourceID int64,
+	sessionID, model, message string,
 ) (int64, error) {
 	result, err := d.db.ExecContext(ctx, `
-		INSERT INTO versions (file_id, storage_mode, blob_hash, delta_offset, base_id, action, source_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, fileID, storageMode, blobHash, deltaOffset, baseID, action, sourceID)
+		INSERT INTO versions (file_id, storage_mode, blob_hash, delta_offset, base_id, action, source_id, session_id, model, message)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, fileID, storageMode, blobHash, deltaOffset, baseID, action, sourceID, sessionID, model, message)
 	if err != nil {
 		return 0, fmt.Errorf("create version: %w", err)
 	}
@@ -515,11 +516,12 @@ func (t *Tx) CreateVersion(
 	baseID *int64,
 	action string,
 	sourceID int64,
+	sessionID, model, message string,
 ) (int64, error) {
 	result, err := t.tx.ExecContext(ctx, `
-		INSERT INTO versions (file_id, storage_mode, blob_hash, delta_offset, base_id, action, source_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, fileID, storageMode, blobHash, deltaOffset, baseID, action, sourceID)
+		INSERT INTO versions (file_id, storage_mode, blob_hash, delta_offset, base_id, action, source_id, session_id, model, message)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, fileID, storageMode, blobHash, deltaOffset, baseID, action, sourceID, sessionID, model, message)
 	if err != nil {
 		return 0, fmt.Errorf("create version: %w", err)
 	}
@@ -554,7 +556,8 @@ func (d *DB) ListVersions(
 	limit, offset int,
 ) ([]map[string]any, error) {
 	query := `
-		SELECT v.id, v.action, v.storage_mode, v.changed_at, s.name as source_name
+		SELECT v.id, v.action, v.storage_mode, v.changed_at, s.name as source_name,
+		       v.session_id, v.model, v.message
 		FROM versions v
 		JOIN sources s ON v.source_id = s.id
 		WHERE v.file_id = ?
@@ -591,7 +594,8 @@ func (d *DB) ListVersions(
 	for rows.Next() {
 		var id int64
 		var action, storageMode, changedAt, sourceName string
-		if err := rows.Scan(&id, &action, &storageMode, &changedAt, &sourceName); err != nil {
+		var sessionID, model, message *string
+		if err := rows.Scan(&id, &action, &storageMode, &changedAt, &sourceName, &sessionID, &model, &message); err != nil {
 			return nil, fmt.Errorf("scan version: %w", err)
 		}
 		versions = append(versions, map[string]any{
@@ -600,6 +604,55 @@ func (d *DB) ListVersions(
 			"storageMode": storageMode,
 			"timestamp":   changedAt,
 			"source":      sourceName,
+			"sessionId":   sessionID,
+			"model":       model,
+			"message":     message,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if versions == nil {
+		versions = []map[string]any{}
+	}
+	return versions, nil
+}
+
+// UpdateVersionMeta 更新版本记录的 session_id、model、message 元数据。
+func (d *DB) UpdateVersionMeta(ctx context.Context, versionID int64, sessionID, model, message string) error {
+	_, err := d.db.ExecContext(ctx,
+		"UPDATE versions SET session_id = ?, model = ?, message = ? WHERE id = ?",
+		sessionID, model, message, versionID,
+	)
+	return err
+}
+
+// ListDeltaVersions 查询所有 delta 存储模式的版本记录。
+func (d *DB) ListDeltaVersions(ctx context.Context) ([]map[string]any, error) {
+	rows, err := d.db.QueryContext(ctx, `
+		SELECT id, file_id, delta_offset, session_id, model, message
+		FROM versions WHERE storage_mode = 'delta'
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("list delta versions: %w", err)
+	}
+	defer rows.Close()
+
+	var versions []map[string]any
+	for rows.Next() {
+		var id, fileID int64
+		var deltaOffset *int64
+		var sessionID, model, message *string
+		if err := rows.Scan(&id, &fileID, &deltaOffset, &sessionID, &model, &message); err != nil {
+			return nil, fmt.Errorf("scan delta version: %w", err)
+		}
+		versions = append(versions, map[string]any{
+			"id":         id,
+			"fileID":     fileID,
+			"deltaOffset": deltaOffset,
+			"session_id": sessionID,
+			"model":      model,
+			"message":    message,
 		})
 	}
 	if err := rows.Err(); err != nil {

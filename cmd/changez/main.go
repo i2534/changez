@@ -81,7 +81,7 @@ func main() {
 	logger := loggerWrapper.Logger
 	compactor := compact.New(database, blobStore, deltaStore, &cfg.Compact, logger, fileMuMap)
 	cleaner := cleanup.New(database, blobStore, deltaStore, &cfg.Cleanup, logger, fileMuMap)
-	httpRouter := router.New(database, blobStore, deltaStore, &cfg, cfg.Token, fileMuMap, compactor, logger, webFS)
+	httpRouter, apiHandler := router.New(database, blobStore, deltaStore, &cfg, cfg.Token, fileMuMap, compactor, logger, webFS)
 
 	srv := &http.Server{
 		Addr:         cfg.Listen,
@@ -93,6 +93,8 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	apiHandler.MigrateMetadataToDB(ctx)
 
 	go compactor.Run(ctx)
 	go cleaner.Run(ctx)

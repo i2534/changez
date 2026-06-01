@@ -181,10 +181,12 @@ Changez 提供以下 MCP 工具：
 
 | 工具 | 说明 |
 |---|---|
-| `changez_snapshot` | 提交文件快照 |
-| `changez_file_log` | 查询文件版本历史 |
-| `changez_file_diff` | 对比两个版本 |
-| `changez_file_restore` | 恢复指定版本内容 |
+| `changez_log` | 查询文件版本历史 |
+| `changez_diff` | 对比两个版本 |
+| `changez_restore` | 恢复指定版本内容 |
+| `changez_files` | 列出项目文件 |
+| `changez_activity` | 查询最近变更活动 |
+| `changez_stats` | 查询项目统计信息 |
 
 ## 技术架构
 

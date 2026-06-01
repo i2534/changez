@@ -171,7 +171,7 @@ func TestDeltaStore_Append_ValidHeader(t *testing.T) {
 		{Type: diffmatchpatch.DiffInsert, Text: "world\n"},
 	}
 
-	offset, _, err := ds.Append(1, 100, diffs, nil, 1024)
+	offset, _, err := ds.Append(1, 100, diffs, 1024)
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), offset)
 
@@ -195,14 +195,14 @@ func TestDeltaStore_Append_OffsetIncrement(t *testing.T) {
 		{Type: diffmatchpatch.DiffEqual, Text: "first\n"},
 	}
 
-	offset1, _, err := ds.Append(1, 1, diffs, nil, 1024)
+	offset1, _, err := ds.Append(1, 1, diffs, 1024)
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), offset1)
 
 	diffs2 := []diffmatchpatch.Diff{
 		{Type: diffmatchpatch.DiffInsert, Text: "second\n"},
 	}
-	offset2, _, err := ds.Append(1, 2, diffs2, nil, 1024)
+	offset2, _, err := ds.Append(1, 2, diffs2, 1024)
 	require.NoError(t, err)
 	assert.Greater(t, offset2, int64(0))
 }
@@ -218,7 +218,7 @@ func TestDeltaStore_RoundTrip(t *testing.T) {
 		{Type: diffmatchpatch.DiffDelete, Text: "deleted\n"},
 	}
 
-	offset, _, err := ds.Append(1, 42, diffs, nil, 1024)
+	offset, _, err := ds.Append(1, 42, diffs, 1024)
 	require.NoError(t, err)
 
 	readVersionID, readDiffs, _, err := ds.ReadEntry(1, offset)
@@ -236,7 +236,7 @@ func TestDeltaStore_ReadEntry_InvalidOffset(t *testing.T) {
 	diffs := []diffmatchpatch.Diff{
 		{Type: diffmatchpatch.DiffEqual, Text: "test\n"},
 	}
-	_, _, err := ds.Append(1, 1, diffs, nil, 1024)
+	_, _, err := ds.Append(1, 1, diffs, 1024)
 	require.NoError(t, err)
 
 	_, _, _, err = ds.ReadEntry(1, -1)
@@ -256,34 +256,6 @@ func TestDeltaStore_ReadEntry_NonExistentFile(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestDeltaStore_DeltaMeta(t *testing.T) {
-	tmpDir := t.TempDir()
-	ds := NewDeltaStore(tmpDir)
-	require.NoError(t, ds.EnsureDir())
-
-	diffs := []diffmatchpatch.Diff{
-		{Type: diffmatchpatch.DiffEqual, Text: "content\n"},
-	}
-	meta := &DeltaMeta{
-		SessionID: "session-123",
-		Model:     "gpt-4",
-		Message:   "test message",
-	}
-
-	offset, _, err := ds.Append(1, 1, diffs, meta, 1024)
-	require.NoError(t, err)
-
-	readVersionID, readDiffs, readMeta, err := ds.ReadEntry(1, offset)
-	require.NoError(t, err)
-
-	assert.Equal(t, int64(1), readVersionID)
-	assert.Equal(t, diffs, readDiffs)
-	require.NotNil(t, readMeta)
-	assert.Equal(t, "session-123", readMeta.SessionID)
-	assert.Equal(t, "gpt-4", readMeta.Model)
-	assert.Equal(t, "test message", readMeta.Message)
-}
-
 func TestDeltaStore_CompressedEntry(t *testing.T) {
 	tmpDir := t.TempDir()
 	ds := NewDeltaStore(tmpDir)
@@ -298,7 +270,7 @@ func TestDeltaStore_CompressedEntry(t *testing.T) {
 		{Type: diffmatchpatch.DiffInsert, Text: "additional content\n"},
 	}
 
-	offset, compressed, err := ds.Append(1, 1, diffs, nil, 100)
+	offset, compressed, err := ds.Append(1, 1, diffs, 100)
 	require.NoError(t, err)
 	assert.True(t, compressed)
 
@@ -318,7 +290,7 @@ func TestDeltaStore_UncompressedEntry(t *testing.T) {
 		{Type: diffmatchpatch.DiffEqual, Text: "small\n"},
 	}
 
-	offset, compressed, err := ds.Append(1, 1, diffs, nil, 10000)
+	offset, compressed, err := ds.Append(1, 1, diffs, 10000)
 	require.NoError(t, err)
 	assert.False(t, compressed)
 
@@ -345,7 +317,7 @@ func TestDeltaStore_MultipleAppends(t *testing.T) {
 
 	var offsets []int64
 	for _, entry := range entries {
-		offset, _, err := ds.Append(1, entry.versionID, entry.diffs, nil, 1024)
+		offset, _, err := ds.Append(1, entry.versionID, entry.diffs, 1024)
 		require.NoError(t, err)
 		offsets = append(offsets, offset)
 	}
@@ -366,10 +338,10 @@ func TestDeltaStore_DifferentFileIDs(t *testing.T) {
 	diffs1 := []diffmatchpatch.Diff{{Type: diffmatchpatch.DiffEqual, Text: "file1\n"}}
 	diffs2 := []diffmatchpatch.Diff{{Type: diffmatchpatch.DiffInsert, Text: "file2\n"}}
 
-	offset1, _, err := ds.Append(1, 1, diffs1, nil, 1024)
+	offset1, _, err := ds.Append(1, 1, diffs1, 1024)
 	require.NoError(t, err)
 
-	offset2, _, err := ds.Append(2, 2, diffs2, nil, 1024)
+	offset2, _, err := ds.Append(2, 2, diffs2, 1024)
 	require.NoError(t, err)
 
 	assert.Equal(t, int64(0), offset1)
@@ -407,7 +379,7 @@ func TestDeltaStore_EmptyDiffs(t *testing.T) {
 
 	diffs := []diffmatchpatch.Diff{}
 
-	offset, _, err := ds.Append(1, 1, diffs, nil, 1024)
+	offset, _, err := ds.Append(1, 1, diffs, 1024)
 	require.NoError(t, err)
 
 	readVersionID, readDiffs, _, err := ds.ReadEntry(1, offset)
@@ -423,33 +395,12 @@ func TestDeltaStore_NilMeta(t *testing.T) {
 
 	diffs := []diffmatchpatch.Diff{{Type: diffmatchpatch.DiffEqual, Text: "test\n"}}
 
-	offset, _, err := ds.Append(1, 1, diffs, nil, 1024)
+	offset, _, err := ds.Append(1, 1, diffs, 1024)
 	require.NoError(t, err)
 
 	_, _, readMeta, err := ds.ReadEntry(1, offset)
 	require.NoError(t, err)
 	assert.Nil(t, readMeta)
-}
-
-func TestDeltaStore_PartialMeta(t *testing.T) {
-	tmpDir := t.TempDir()
-	ds := NewDeltaStore(tmpDir)
-	require.NoError(t, ds.EnsureDir())
-
-	diffs := []diffmatchpatch.Diff{{Type: diffmatchpatch.DiffEqual, Text: "test\n"}}
-	meta := &DeltaMeta{
-		SessionID: "only-session",
-	}
-
-	offset, _, err := ds.Append(1, 1, diffs, meta, 1024)
-	require.NoError(t, err)
-
-	_, _, readMeta, err := ds.ReadEntry(1, offset)
-	require.NoError(t, err)
-	require.NotNil(t, readMeta)
-	assert.Equal(t, "only-session", readMeta.SessionID)
-	assert.Empty(t, readMeta.Model)
-	assert.Empty(t, readMeta.Message)
 }
 
 func TestBlobStore_CompressMethod(t *testing.T) {
@@ -482,7 +433,7 @@ func TestDeltaStore_VerifyCompressedData(t *testing.T) {
 		{Type: diffmatchpatch.DiffEqual, Text: largeText},
 	}
 
-	offset, _, err := ds.Append(1, 1, diffs, nil, 100)
+	offset, _, err := ds.Append(1, 1, diffs, 100)
 	require.NoError(t, err)
 
 	data, err := os.ReadFile(filepath.Join(tmpDir, "deltas", "1.delta"))

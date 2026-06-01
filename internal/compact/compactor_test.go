@@ -86,7 +86,7 @@ func (f *compactFixture) createBlobVersion(t *testing.T, content []byte) int64 {
 	hash, err := f.blobStore.Store(content)
 	require.NoError(t, err)
 
-	versionID, err := f.db.CreateVersion(context.Background(), f.fileID, "blob", &hash, nil, nil, "update", f.sourceID)
+	versionID, err := f.db.CreateVersion(context.Background(), f.fileID, "blob", &hash, nil, nil, "update", f.sourceID, "", "", "")
 	require.NoError(t, err)
 
 	err = f.db.UpdateLatestVersion(context.Background(), f.fileID, versionID)
@@ -98,10 +98,10 @@ func (f *compactFixture) createBlobVersion(t *testing.T, content []byte) int64 {
 // createDeltaVersion 创建一个 delta 模式的版本
 func (f *compactFixture) createDeltaVersion(t *testing.T, baseVersionID int64, diffs []diffmatchpatch.Diff) int64 {
 	t.Helper()
-	offset, _, err := f.deltaStore.Append(f.fileID, 0, diffs, nil, 1024)
+	offset, _, err := f.deltaStore.Append(f.fileID, 0, diffs, 1024)
 	require.NoError(t, err)
 
-	versionID, err := f.db.CreateVersion(context.Background(), f.fileID, "delta", nil, &offset, &baseVersionID, "update", f.sourceID)
+	versionID, err := f.db.CreateVersion(context.Background(), f.fileID, "delta", nil, &offset, &baseVersionID, "update", f.sourceID, "", "", "")
 	require.NoError(t, err)
 
 	err = f.db.UpdateLatestVersion(context.Background(), f.fileID, versionID)
@@ -265,7 +265,7 @@ func TestRebuildContent(t *testing.T) {
 	hash, err := f.blobStore.Store(content)
 	require.NoError(t, err)
 
-	versionID, err := f.db.CreateVersion(context.Background(), f.fileID, "blob", &hash, nil, nil, "update", f.sourceID)
+	versionID, err := f.db.CreateVersion(context.Background(), f.fileID, "blob", &hash, nil, nil, "update", f.sourceID, "", "", "")
 	require.NoError(t, err)
 
 	ver, err := f.db.GetVersion(context.Background(), versionID)
@@ -409,7 +409,7 @@ func TestCompactMultipleFiles(t *testing.T) {
 	// 为第二个文件创建版本链
 	hash2, err := f.blobStore.Store([]byte("file2 content"))
 	require.NoError(t, err)
-	versionID2, err := f.db.CreateVersion(context.Background(), fileID2, "blob", &hash2, nil, nil, "update", f.sourceID)
+	versionID2, err := f.db.CreateVersion(context.Background(), fileID2, "blob", &hash2, nil, nil, "update", f.sourceID, "", "", "")
 	require.NoError(t, err)
 	err = f.db.UpdateLatestVersion(context.Background(), fileID2, versionID2)
 	require.NoError(t, err)

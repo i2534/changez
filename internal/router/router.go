@@ -29,7 +29,7 @@ func New(
 	compactor *compact.Compactor,
 	logger *slog.Logger,
 	webFS *embed.FS,
-) http.Handler {
+) (http.Handler, *handler.Handler) {
 	h := handler.NewHandler(database, blobStore, deltaStore, cfg, logger, fileMuMap)
 	h.Compact = compactor
 
@@ -157,7 +157,7 @@ if webFS != nil {
 		}
 	}
 
-	return mux
+	return mux, h
 }
 
 // statusCaptureWriter 包装 ResponseWriter 以捕获 HTTP 状态码。
