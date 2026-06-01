@@ -3,58 +3,14 @@ package mcp
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 
 	mcp "github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/changez/changez/internal/handler"
 )
 
-func parseFilesJSON(s string, req *handler.SnapshotRequest) error {
-	var files []handler.SnapshotFile
-	if err := json.Unmarshal([]byte(s), &files); err != nil {
-		return fmt.Errorf("parse files JSON: %v", err)
-	}
-	req.Files = files
-	return nil
-}
-
 func toolError(msg string) (*mcp.CallToolResult, error) {
 	return mcp.NewToolResultError(msg), nil
-}
-
-func NewSnapshotTool(h *handler.Handler) (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
-	tool := mcp.NewTool("changez_snapshot",
-		mcp.WithDescription("Capture a snapshot of file changes. Upload file contents for version tracking."),
-		mcp.WithString("source", mcp.Required(), mcp.Description("Source of the change (e.g. opencode, claudecode, cursor, human)")),
-		mcp.WithString("sessionId", mcp.Description("Session ID")),
-		mcp.WithString("model", mcp.Description("Model name")),
-		mcp.WithString("files", mcp.Required(), mcp.Description("JSON array of files")),
-	)
-
-	handlerFunc := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		source, err := req.RequireString("source")
-		if err != nil {
-			return toolError(err.Error())
-		}
-		sessionID := req.GetString("sessionId", "")
-		model := req.GetString("model", "")
-		filesStr, err := req.RequireString("files")
-		if err != nil {
-			return toolError(err.Error())
-		}
-
-		r := &handler.SnapshotRequest{Source: source, SessionID: sessionID, Model: model}
-		if err := parseFilesJSON(filesStr, r); err != nil {
-			return toolError(err.Error())
-		}
-
-		results := h.ProcessSnapshot(ctx, r)
-		resultJSON, _ := json.Marshal(results)
-		return mcp.NewToolResultText(string(resultJSON)), nil
-	}
-
-	return tool, handlerFunc
 }
 
 func NewLogTool(h *handler.Handler) (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
@@ -142,6 +98,79 @@ func NewDiffTool(h *handler.Handler) (mcp.Tool, func(context.Context, mcp.CallTo
 			return toolError(err.Error())
 		}
 		resultJSON, _ := json.Marshal(result)
+		return mcp.NewToolResultText(string(resultJSON)), nil
+	}
+
+	return tool, handlerFunc
+}
+
+func NewFilesTool(h *handler.Handler) (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
+	tool := mcp.NewTool("changez_files",
+		mcp.WithDescription("List files in a project."),
+		mcp.WithString("project", mcp.Required(), mcp.Description("Project name")),
+		mcp.WithNumber("limit", mcp.Description("Max results (default 50)")),
+		mcp.WithNumber("offset", mcp.Description("Result offset (default 0)")),
+	)
+
+	handlerFunc := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		project, err := req.RequireString("project")
+		if err != nil {
+			return toolError(err.Error())
+		}
+		files, err := h.ProcessFiles(ctx, project,
+			int(req.GetInt("limit", 50)),
+			int(req.GetInt("offset", 0)),
+		)
+		if err != nil {
+			return toolError(err.Error())
+		}
+		resultJSON, _ := json.Marshal(files)
+		return mcp.NewToolResultText(string(resultJSON)), nil
+	}
+
+	return tool, handlerFunc
+}
+
+func NewActivityTool(h *handler.Handler) (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
+	tool := mcp.NewTool("changez_activity",
+		mcp.WithDescription("Get recent file change activity across projects."),
+		mcp.WithString("project", mcp.Description("Filter by project name")),
+		mcp.WithString("source", mcp.Description("Filter by source (e.g. opencode, claudecode, cursor, human)")),
+		mcp.WithNumber("limit", mcp.Description("Max results (default 20)")),
+	)
+
+	handlerFunc := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		limit := int(req.GetInt("limit", 20))
+		if limit > 100 {
+			limit = 100
+		}
+		activity, err := h.ProcessActivity(ctx,
+			req.GetString("project", ""),
+			req.GetString("source", ""),
+			limit,
+		)
+		if err != nil {
+			return toolError(err.Error())
+		}
+		resultJSON, _ := json.Marshal(activity)
+		return mcp.NewToolResultText(string(resultJSON)), nil
+	}
+
+	return tool, handlerFunc
+}
+
+func NewStatsTool(h *handler.Handler) (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
+	tool := mcp.NewTool("changez_stats",
+		mcp.WithDescription("Get statistics about projects. Without project, returns global stats."),
+		mcp.WithString("project", mcp.Description("Project name (optional, returns global stats if omitted)")),
+	)
+
+	handlerFunc := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		stats, err := h.ProcessStats(ctx, req.GetString("project", ""))
+		if err != nil {
+			return toolError(err.Error())
+		}
+		resultJSON, _ := json.Marshal(stats)
 		return mcp.NewToolResultText(string(resultJSON)), nil
 	}
 

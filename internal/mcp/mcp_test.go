@@ -38,38 +38,6 @@ func setupMCPHandler(t *testing.T) *handler.Handler {
 	return h
 }
 
-// ========== parseFilesJSON Tests ==========
-
-func TestParseFilesJSON_Valid(t *testing.T) {
-	req := &handler.SnapshotRequest{}
-	input := `[{"path":"/a.go","content":"pkg a","action":"create","message":"init"}]`
-	err := parseFilesJSON(input, req)
-	require.NoError(t, err)
-	require.Len(t, req.Files, 1)
-	assert.Equal(t, "/a.go", req.Files[0].Path)
-	assert.Equal(t, "pkg a", req.Files[0].Content)
-	assert.Equal(t, "create", req.Files[0].Action)
-	assert.Equal(t, "init", req.Files[0].Message)
-}
-
-func TestParseFilesJSON_Multiple(t *testing.T) {
-	req := &handler.SnapshotRequest{}
-	input := `[
-		{"path":"/a.go","content":"pkg a"},
-		{"path":"/b.go","content":"pkg b"}
-	]`
-	err := parseFilesJSON(input, req)
-	require.NoError(t, err)
-	require.Len(t, req.Files, 2)
-}
-
-func TestParseFilesJSON_Invalid(t *testing.T) {
-	req := &handler.SnapshotRequest{}
-	err := parseFilesJSON("not json", req)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "parse files JSON")
-}
-
 // ========== toolError Tests ==========
 
 func TestToolError(t *testing.T) {
@@ -107,73 +75,23 @@ func TestNewMCPHandler_AcceptsRequest(t *testing.T) {
 	assert.NotEqual(t, http.StatusNotFound, w.Code)
 }
 
-// ========== NewSnapshotTool Handler Tests ==========
-
-func TestNewSnapshotTool_Handler_Create(t *testing.T) {
+func TestNewMCPHandler_RegistersAllTools(t *testing.T) {
 	h := setupMCPHandler(t)
-	// Create a project first via handler
-	createProjectViaHandler(t, h)
 
-	tool, handlerFunc := NewSnapshotTool(h)
-	require.NotNil(t, tool)
-	require.NotNil(t, handlerFunc)
+	expectedTools := []string{"changez_log", "changez_restore", "changez_diff", "changez_files", "changez_activity", "changez_stats"}
 
-	filesJSON, _ := json.Marshal([]map[string]string{
-		{"path": "/home/user/proj/main.go", "content": "package main\nfunc main() {}"},
-	})
-	req := mcp.CallToolRequest{}
-	req.Params.Name = "changez_snapshot"
-	req.Params.Arguments = map[string]interface{}{
-		"source": "human",
-		"files":  string(filesJSON),
-	}
-
-	result, err := handlerFunc(context.Background(), req)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.Len(t, result.Content, 1)
-	text, ok := result.Content[0].(mcp.TextContent)
-	require.True(t, ok)
-
-	var results []handler.SnapshotResult
-	err = json.Unmarshal([]byte(text.Text), &results)
-	require.NoError(t, err)
-	require.Len(t, results, 1)
-	assert.Equal(t, "captured", results[0].Status)
-}
-
-func TestNewSnapshotTool_Handler_MissingSource(t *testing.T) {
-	h := setupMCPHandler(t)
-	_, handlerFunc := NewSnapshotTool(h)
-	require.NotNil(t, handlerFunc)
-
-	req := mcp.CallToolRequest{}
-	req.Params.Name = "changez_snapshot"
-	req.Params.Arguments = map[string]interface{}{
-		"files": "[]",
-	}
-
-	result, err := handlerFunc(context.Background(), req)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	assert.True(t, result.IsError)
-}
-
-func TestNewSnapshotTool_Handler_InvalidFiles(t *testing.T) {
-	h := setupMCPHandler(t)
-	_, handlerFunc := NewSnapshotTool(h)
-
-	req := mcp.CallToolRequest{}
-	req.Params.Name = "changez_snapshot"
-	req.Params.Arguments = map[string]interface{}{
-		"source": "human",
-		"files":  "not json",
-	}
-
-	result, err := handlerFunc(context.Background(), req)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	assert.True(t, result.IsError)
+	toolLog, _ := NewLogTool(h)
+	assert.Equal(t, expectedTools[0], toolLog.Name)
+	toolRestore, _ := NewRestoreTool(h)
+	assert.Equal(t, expectedTools[1], toolRestore.Name)
+	toolDiff, _ := NewDiffTool(h)
+	assert.Equal(t, expectedTools[2], toolDiff.Name)
+	toolFiles, _ := NewFilesTool(h)
+	assert.Equal(t, expectedTools[3], toolFiles.Name)
+	toolActivity, _ := NewActivityTool(h)
+	assert.Equal(t, expectedTools[4], toolActivity.Name)
+	toolStats, _ := NewStatsTool(h)
+	assert.Equal(t, expectedTools[5], toolStats.Name)
 }
 
 // ========== NewLogTool Handler Tests ==========
@@ -289,22 +207,156 @@ func TestNewDiffTool_Handler_NonExistentPath(t *testing.T) {
 	assert.True(t, result.IsError)
 }
 
-// ========== Tool Definition Tests ==========
+// ========== NewFilesTool Handler Tests ==========
 
-func TestSnapshotTool_Definition(t *testing.T) {
+func TestNewFilesTool_Handler_MissingProject(t *testing.T) {
 	h := setupMCPHandler(t)
-	tool, _ := NewSnapshotTool(h)
-	require.NotNil(t, tool)
-	assert.Equal(t, "changez_snapshot", tool.Name)
-	assert.NotEmpty(t, tool.Description)
-	assert.NotNil(t, tool.InputSchema)
-	props := tool.InputSchema.Properties
-	require.NotNil(t, props)
-	assert.Contains(t, props, "source")
-	assert.Contains(t, props, "files")
-	assert.Contains(t, props, "sessionId")
-	assert.Contains(t, props, "model")
+	_, handlerFunc := NewFilesTool(h)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Name = "changez_files"
+	req.Params.Arguments = map[string]interface{}{}
+
+	result, err := handlerFunc(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.IsError)
 }
+
+func TestNewFilesTool_Handler_NonExistentProject(t *testing.T) {
+	h := setupMCPHandler(t)
+	_, handlerFunc := NewFilesTool(h)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Name = "changez_files"
+	req.Params.Arguments = map[string]interface{}{
+		"project": "nonexistent",
+	}
+
+	result, err := handlerFunc(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	// Returns empty list, not an error
+	require.NotNil(t, result)
+	require.Len(t, result.Content, 1)
+	text, ok := result.Content[0].(mcp.TextContent)
+	require.True(t, ok)
+	assert.Equal(t, "[]", text.Text)
+}
+
+func TestNewFilesTool_Handler_Success(t *testing.T) {
+	h := setupMCPHandler(t)
+	createProjectViaHandler(t, h)
+
+	_, handlerFunc := NewFilesTool(h)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Name = "changez_files"
+	req.Params.Arguments = map[string]interface{}{
+		"project": "test",
+	}
+
+	result, err := handlerFunc(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Len(t, result.Content, 1)
+	text, ok := result.Content[0].(mcp.TextContent)
+	require.True(t, ok)
+	assert.Equal(t, "[]", text.Text)
+}
+
+// ========== NewActivityTool Handler Tests ==========
+
+func TestNewActivityTool_Handler_Success(t *testing.T) {
+	h := setupMCPHandler(t)
+	_, handlerFunc := NewActivityTool(h)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Name = "changez_activity"
+	req.Params.Arguments = map[string]interface{}{
+		"limit": float64(10),
+	}
+
+	result, err := handlerFunc(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Len(t, result.Content, 1)
+	text, ok := result.Content[0].(mcp.TextContent)
+	require.True(t, ok)
+	assert.Equal(t, "[]", text.Text)
+}
+
+func TestNewActivityTool_Handler_WithSource(t *testing.T) {
+	h := setupMCPHandler(t)
+	_, handlerFunc := NewActivityTool(h)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Name = "changez_activity"
+	req.Params.Arguments = map[string]interface{}{
+		"source": "opencode",
+		"limit":  float64(5),
+	}
+
+	result, err := handlerFunc(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Len(t, result.Content, 1)
+	text, ok := result.Content[0].(mcp.TextContent)
+	require.True(t, ok)
+	assert.Equal(t, "[]", text.Text)
+}
+
+// ========== NewStatsTool Handler Tests ==========
+
+func TestNewStatsTool_Handler_Global(t *testing.T) {
+	h := setupMCPHandler(t)
+	_, handlerFunc := NewStatsTool(h)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Name = "changez_stats"
+	req.Params.Arguments = map[string]interface{}{}
+
+	result, err := handlerFunc(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Len(t, result.Content, 1)
+	text, ok := result.Content[0].(mcp.TextContent)
+	require.True(t, ok)
+	var stats map[string]interface{}
+	err = json.Unmarshal([]byte(text.Text), &stats)
+	require.NoError(t, err)
+	assert.Contains(t, stats, "projects")
+	assert.Contains(t, stats, "files")
+	assert.Contains(t, stats, "versions")
+}
+
+func TestNewStatsTool_Handler_ByProject(t *testing.T) {
+	h := setupMCPHandler(t)
+	createProjectViaHandler(t, h)
+
+	_, handlerFunc := NewStatsTool(h)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Name = "changez_stats"
+	req.Params.Arguments = map[string]interface{}{
+		"project": "test",
+	}
+
+	result, err := handlerFunc(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Len(t, result.Content, 1)
+	text, ok := result.Content[0].(mcp.TextContent)
+	require.True(t, ok)
+	var stats map[string]interface{}
+	err = json.Unmarshal([]byte(text.Text), &stats)
+	require.NoError(t, err)
+	assert.Contains(t, stats, "files")
+	assert.Contains(t, stats, "versions")
+	assert.Contains(t, stats, "sources")
+}
+
+// ========== Tool Definition Tests ==========
 
 func TestLogTool_Definition(t *testing.T) {
 	h := setupMCPHandler(t)
@@ -341,6 +393,40 @@ func TestDiffTool_Definition(t *testing.T) {
 	assert.Contains(t, props, "path")
 	assert.Contains(t, props, "versionA")
 	assert.Contains(t, props, "versionB")
+}
+
+func TestFilesTool_Definition(t *testing.T) {
+	h := setupMCPHandler(t)
+	tool, _ := NewFilesTool(h)
+	require.NotNil(t, tool)
+	assert.Equal(t, "changez_files", tool.Name)
+	props := tool.InputSchema.Properties
+	require.NotNil(t, props)
+	assert.Contains(t, props, "project")
+	assert.Contains(t, props, "limit")
+	assert.Contains(t, props, "offset")
+}
+
+func TestActivityTool_Definition(t *testing.T) {
+	h := setupMCPHandler(t)
+	tool, _ := NewActivityTool(h)
+	require.NotNil(t, tool)
+	assert.Equal(t, "changez_activity", tool.Name)
+	props := tool.InputSchema.Properties
+	require.NotNil(t, props)
+	assert.Contains(t, props, "project")
+	assert.Contains(t, props, "source")
+	assert.Contains(t, props, "limit")
+}
+
+func TestStatsTool_Definition(t *testing.T) {
+	h := setupMCPHandler(t)
+	tool, _ := NewStatsTool(h)
+	require.NotNil(t, tool)
+	assert.Equal(t, "changez_stats", tool.Name)
+	props := tool.InputSchema.Properties
+	require.NotNil(t, props)
+	assert.Contains(t, props, "project")
 }
 
 // ========== Helpers ==========

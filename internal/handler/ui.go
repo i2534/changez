@@ -31,7 +31,10 @@ func (h *Handler) HandleRecentActivity(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	h.Logger.Debug("recent activity request", "limit", limit)
+	projectFilter := r.URL.Query().Get("project")
+	sourceFilter := r.URL.Query().Get("source")
+
+	h.Logger.Debug("recent activity request", "limit", limit, "project", projectFilter, "source", sourceFilter)
 
 	query := `
 		SELECT v.id AS versionId, f.id AS fileId, f.path AS filePath,
@@ -42,11 +45,23 @@ func (h *Handler) HandleRecentActivity(w http.ResponseWriter, r *http.Request) {
 		JOIN projects p ON f.project_id = p.id
 		JOIN sources s ON v.source_id = s.id
 		WHERE p.is_deleted = 0
-		ORDER BY v.changed_at DESC
-		LIMIT ?
 	`
+	args := []any{}
 
-	rows, err := h.DB.Query(r.Context(), query, limit)
+	if projectFilter != "" {
+		query += " AND p.name = ?"
+		args = append(args, projectFilter)
+	}
+
+	if sourceFilter != "" {
+		query += " AND s.name = ?"
+		args = append(args, sourceFilter)
+	}
+
+	query += " ORDER BY v.changed_at DESC LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := h.DB.Query(r.Context(), query, args...)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", fmt.Sprintf("查询活动记录失败: %v", err))
 		return

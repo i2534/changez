@@ -91,7 +91,7 @@ func (h *Handler) snapshotSingleFile(ctx context.Context, filePath, action, cont
 		}
 
 		baseVerID := latestVer["id"].(int64)
-		versionID, err := h.DB.CreateVersion(ctx, fileID, "delete", nil, nil, &baseVerID, "delete", sourceID)
+		versionID, err := h.DB.CreateVersion(ctx, fileID, "delete", nil, nil, &baseVerID, "delete", sourceID, "", "", "")
 		if err != nil {
 			return SnapshotResult{Path: filePath, Status: "error", Reason: fmt.Sprintf("写入删除版本失败: %v", err)}
 		}
@@ -138,7 +138,7 @@ func (h *Handler) snapshotSingleFile(ctx context.Context, filePath, action, cont
 			return SnapshotResult{Path: filePath, Status: "error", Reason: fmt.Sprintf("开启事务失败: %v", txErr)}
 		}
 
-		versionID, txErr := tx.CreateVersion(ctx, fileID, "blob", &hash, nil, nil, action, sourceID)
+		versionID, txErr := tx.CreateVersion(ctx, fileID, "blob", &hash, nil, nil, action, sourceID, sessionID, model, message)
 		if txErr != nil {
 			if rbErr := tx.Rollback(); rbErr != nil {
 				slog.Error("rollback failed", "error", rbErr)
@@ -168,15 +168,6 @@ func (h *Handler) snapshotSingleFile(ctx context.Context, filePath, action, cont
 
 	diffs := storage.ComputeDiffs(string(prevContent), content)
 
-	var meta *storage.DeltaMeta
-	if sessionID != "" || model != "" || message != "" {
-		meta = &storage.DeltaMeta{
-			SessionID: sessionID,
-			Model:     model,
-			Message:   message,
-		}
-	}
-
 	baseID := latestVer["id"].(int64)
 
 	tx, txErr := h.DB.BeginTx(ctx)
@@ -184,7 +175,7 @@ func (h *Handler) snapshotSingleFile(ctx context.Context, filePath, action, cont
 		return SnapshotResult{Path: filePath, Status: "error", Reason: fmt.Sprintf("开启事务失败: %v", txErr)}
 	}
 
-	versionID, txErr := tx.CreateVersion(ctx, fileID, "delta", nil, nil, &baseID, action, sourceID)
+	versionID, txErr := tx.CreateVersion(ctx, fileID, "delta", nil, nil, &baseID, action, sourceID, sessionID, model, message)
 	if txErr != nil {
 		if rbErr := tx.Rollback(); rbErr != nil {
 			slog.Error("rollback failed", "error", rbErr)
@@ -196,7 +187,7 @@ func (h *Handler) snapshotSingleFile(ctx context.Context, filePath, action, cont
 	// delta 文件会留下孤儿数据（不影响正确性但会膨胀文件）。
 	// 长期方案：将 Append 移入事务或采用两阶段提交。
 	threshold := h.Config.Compact.DeltaCompressThreshold
-	offset, _, txErr := h.DeltaStore.Append(fileID, versionID, diffs, meta, threshold)
+	offset, _, txErr := h.DeltaStore.Append(fileID, versionID, diffs, threshold)
 	if txErr != nil {
 		if rbErr := tx.Rollback(); rbErr != nil {
 			slog.Error("rollback failed", "error", rbErr)
@@ -295,4 +286,87 @@ func (h *Handler) ProcessDiff(ctx context.Context, path string, versionA, versio
 		"to":   versionB,
 		"diff": diff,
 	}, nil
+}
+
+func (h *Handler) ProcessActivity(ctx context.Context, project, source string, limit int) ([]ActivityItem, error) {
+	query := `
+		SELECT v.id AS versionId, f.id AS fileId, f.path AS filePath,
+		       p.id AS projectId, p.name AS projectName,
+		       v.action, s.name AS source, v.changed_at AS timestamp
+		FROM versions v
+		JOIN files f ON v.file_id = f.id
+		JOIN projects p ON f.project_id = p.id
+		JOIN sources s ON v.source_id = s.id
+		WHERE p.is_deleted = 0
+	`
+	args := []any{}
+
+	if project != "" {
+		query += " AND p.name = ?"
+		args = append(args, project)
+	}
+
+	if source != "" {
+		query += " AND s.name = ?"
+		args = append(args, source)
+	}
+
+	query += " ORDER BY v.changed_at DESC LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := h.DB.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	activity := make([]ActivityItem, 0)
+	for rows.Next() {
+		var item ActivityItem
+		if err := rows.Scan(&item.VersionID, &item.FileID, &item.FilePath, &item.ProjectID, &item.ProjectName, &item.Action, &item.Source, &item.Timestamp); err != nil {
+			return nil, err
+		}
+		activity = append(activity, item)
+	}
+
+	return activity, nil
+}
+
+func (h *Handler) ProcessFiles(ctx context.Context, project string, limit, offset int) ([]map[string]any, error) {
+	query := `
+		SELECT f.path, f.latest_version_id, f.created_at
+		FROM files f
+		JOIN projects p ON f.project_id = p.id
+		WHERE p.name = ? AND p.is_deleted = 0 AND f.is_deleted = 0
+		ORDER BY f.path LIMIT ? OFFSET ?
+	`
+	rows, err := h.DB.Query(ctx, query, project, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	files := make([]map[string]any, 0)
+	for rows.Next() {
+		var filePath string
+		var latestVersionID *int64
+		var createdAt string
+		if err := rows.Scan(&filePath, &latestVersionID, &createdAt); err != nil {
+			return nil, err
+		}
+		files = append(files, map[string]any{
+			"path":            filePath,
+			"latestVersionId": latestVersionID,
+			"createdAt":       createdAt,
+		})
+	}
+
+	return files, nil
+}
+
+func (h *Handler) ProcessStats(ctx context.Context, project string) (map[string]any, error) {
+	if project != "" {
+		return h.ProcessStatsByProject(ctx, project)
+	}
+	return h.DB.GetStats(ctx)
 }

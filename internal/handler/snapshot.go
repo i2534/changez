@@ -269,12 +269,70 @@ func (h *Handler) HandleListFiles(w http.ResponseWriter, r *http.Request) {
 // HandleStats 处理 GET /api/stats。
 func (h *Handler) HandleStats(w http.ResponseWriter, r *http.Request) {
 	h.Logger.Debug("stats request")
-	stats, err := h.DB.GetStats(r.Context())
+	projectFilter := r.URL.Query().Get("project")
+	var stats map[string]any
+	var err error
+
+	if projectFilter != "" {
+		stats, err = h.ProcessStatsByProject(r.Context(), projectFilter)
+	} else {
+		stats, err = h.DB.GetStats(r.Context())
+	}
+
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", fmt.Sprintf("查询统计失败: %v", err))
 		return
 	}
 	writeJSON(w, http.StatusOK, stats)
+}
+
+func (h *Handler) ProcessStatsByProject(ctx context.Context, projectName string) (map[string]any, error) {
+	stats := make(map[string]any)
+
+	var fileCount int
+	if err := h.DB.Handle().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM files f
+		 JOIN projects p ON f.project_id = p.id
+		 WHERE p.name = ? AND p.is_deleted = 0 AND f.is_deleted = 0`, projectName).Scan(&fileCount); err != nil {
+		return nil, err
+	}
+	stats["files"] = fileCount
+
+	var versionCount int
+	if err := h.DB.Handle().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM versions v
+		 JOIN files f ON v.file_id = f.id
+		 JOIN projects p ON f.project_id = p.id
+		 WHERE p.name = ? AND p.is_deleted = 0 AND f.is_deleted = 0`, projectName).Scan(&versionCount); err != nil {
+		return nil, err
+	}
+	stats["versions"] = versionCount
+
+	rows, err := h.DB.Handle().QueryContext(ctx,
+		`SELECT s.name, COUNT(v.id) as cnt
+		 FROM sources s
+		 LEFT JOIN versions v ON s.id = v.source_id
+		 JOIN files f ON v.file_id = f.id
+		 JOIN projects p ON f.project_id = p.id
+		 WHERE p.name = ? AND p.is_deleted = 0 AND f.is_deleted = 0
+		 GROUP BY s.id ORDER BY cnt DESC`, projectName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	sourceBreakdown := make(map[string]int)
+	for rows.Next() {
+		var name string
+		var count int
+		if err := rows.Scan(&name, &count); err != nil {
+			return nil, err
+		}
+		sourceBreakdown[name] = count
+	}
+	stats["sources"] = sourceBreakdown
+
+	return stats, nil
 }
 
 func (h *Handler) updateLatestSnapshotCache(results []SnapshotResult) {
