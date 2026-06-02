@@ -25,7 +25,14 @@ import * as https from "node:https";
 import * as path from "node:path";
 import { createSignal, For, Show } from "solid-js";
 
-import type { TuiPlugin, TuiPluginApi, TuiPluginMeta, TuiPluginModule, TuiSlotPlugin, TuiSlotContext } from "@opencode-ai/plugin/tui";
+import type {
+  TuiPlugin,
+  TuiPluginApi,
+  TuiPluginMeta,
+  TuiPluginModule,
+  TuiSlotPlugin,
+  TuiSlotContext,
+} from "@opencode-ai/plugin/tui";
 
 type TuiConfig = {
   url: string;
@@ -48,7 +55,11 @@ type TrackedFile = {
 
 type PluginOptions = Record<string, unknown> | undefined;
 
-function httpGet(urlStr: string, token?: string, timeoutMs = 5000): Promise<{ status: number; body?: string }> {
+function httpGet(
+  urlStr: string,
+  token?: string,
+  timeoutMs = 5000,
+): Promise<{ status: number; body?: string }> {
   const urlObj = new URL(urlStr);
   const isHttps = urlObj.protocol === "https:";
   const mod = isHttps ? https : http;
@@ -118,7 +129,7 @@ const createSidebarSlot = (
           statusLabel = err;
           statusColor = theme.error;
           dotChar = "●";
-        } else if (snapshot || hasFiles) {
+        } else if (hasFiles) {
           statusLabel = "Connected";
           statusColor = theme.success;
           dotChar = "●";
@@ -128,25 +139,18 @@ const createSidebarSlot = (
           dotChar = "○";
         }
 
-        let summary = "";
-        if (snapshot) {
-          const ago = timeAgo(snapshot.updatedAt);
-          summary = `Last captured ${ago}`;
-        } else if (hasFiles) {
-          summary = "No snapshots yet";
-        }
-
         const files = allFiles()
           .filter((f) => f.latestVersionId !== null)
           .map((f) => ({
             path: f.path,
             versionId: f.latestVersionId,
-          }));
+          }))
+          .sort((a, b) => b.versionId - a.versionId);
         const fileCount = files.length;
         const showArrow = fileCount > 0;
 
         return (
-          <box flexDirection="column" gap={1}>
+          <box flexDirection="column" gap={0}>
             <box
               flexDirection="row"
               gap={1}
@@ -156,7 +160,7 @@ const createSidebarSlot = (
               <text fg={theme.text}>
                 <Show when={showArrow}>
                   <span>{sidebarOpen() ? "▼" : "▶"}</span>
-                  <span>{" "}</span>
+                  <span> </span>
                 </Show>
                 <b>changez</b>
               </text>
@@ -166,22 +170,24 @@ const createSidebarSlot = (
               </text>
             </box>
 
-            <Show when={sidebarOpen()}>
-              <box flexDirection="column" gap={0}>
-                <Show when={summary}>
-                  <text fg={theme.textMuted}>{summary}</text>
-                </Show>
-
-                <Show when={fileCount > 0}>
+           <Show when={sidebarOpen()}>
+               <box flexDirection="column" gap={0}>
+                 <Show when={fileCount > 0}>
                   <For each={files}>
                     {(file) => (
-                      <box flexDirection="row" gap={1} justifyContent="space-between">
-                        <text fg={theme.textMuted} wrapMode="none" flexShrink={0}>
-                          {"  • "}{path.basename(file.path)}
+                      <box flexDirection="row">
+                        <text
+                          fg={theme.textMuted}
+                          wrapMode="none"
+                          flexGrow={3}
+                          flexShrink={1}
+                        >
+                          {"• "}
+                          {path.basename(file.path)}
                         </text>
-                        <text fg={theme.text} flexShrink={0}>
-                          @v{file.versionId}
-                        </text>
+                        <box flexGrow={1} justifyContent="flex-end">
+                          <text fg={theme.text}>@v{file.versionId}</text>
+                        </box>
                       </box>
                     )}
                   </For>
@@ -270,7 +276,7 @@ const tui: TuiPlugin = async (
     } else {
       consecutiveFailures++;
       if (consecutiveFailures >= 3) {
-   setError("Probing...");
+        setError("Probing...");
         consecutiveFailures = 0;
         probeFailures = 0;
         startPolling(60_000, true);
@@ -287,24 +293,32 @@ const tui: TuiPlugin = async (
         httpGet(filesUrl, cfg.token, 5000),
       ]);
 
-      if (snapshotRes.status !== 200 || !snapshotRes.body) {
-        handlePollFailure();
-        return;
-      }
-      consecutiveFailures = 0;
-      probeFailures = 0;
-      if (isProbing) {
-        setError(null);
-        startPolling(8000, false);
-      }
-      setData(JSON.parse(snapshotRes.body));
-
+      // Files endpoint determines connectivity; snapshot is optional
       if (filesRes.status === 200 && filesRes.body) {
         const parsed = JSON.parse(filesRes.body);
         setAllFiles(parsed.files ?? []);
-        setError(null);
+        consecutiveFailures = 0;
+        probeFailures = 0;
+        if (isProbing) {
+          setError(null);
+          startPolling(8000, false);
+        }
       } else if (filesRes.status >= 400) {
         setError(`Files error ${filesRes.status}`);
+        handlePollFailure();
+        return;
+      } else {
+        handlePollFailure();
+        return;
+      }
+
+      // Snapshot data is optional — best-effort, no failure on missing data
+      if (snapshotRes.status === 200 && snapshotRes.body) {
+        try {
+          setData(JSON.parse(snapshotRes.body));
+        } catch {
+          setData(null);
+        }
       }
     } catch {
       handlePollFailure();
