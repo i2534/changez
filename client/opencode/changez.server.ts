@@ -14,6 +14,8 @@ import * as path from "node:path";
 import * as http from "node:http";
 import * as https from "node:https";
 
+const { loadConfig, shouldSkipFile } = require(path.join(__dirname, "lib", "config.js"));
+
 type ChangezConfig = {
   url: string;
   token?: string;
@@ -256,7 +258,18 @@ const createServerPlugin = async (
   const projectName = cfg.project?.name ?? path.basename(projectRoot);
   const log = createLogger(client, cfg);
 
-  log("info", `loaded (${cfg.url}, project: ${projectName})`);
+  const pluginConfig = {
+    url: cfg.url,
+    token: cfg.token,
+    source: cfg.source,
+    log_level: cfg.logLevel,
+  };
+  const { config: unifiedConfig, excludes, projectRoot: detectedRoot } = loadConfig(
+    projectRoot,
+    pluginConfig,
+  );
+
+  log("info", `loaded (${unifiedConfig.url}, project: ${projectName}, excludes: ${excludes.length} patterns)`);
 
   // Project 注册：成功后停止，失败则每 30 秒无限重试
   let registered = false;
@@ -381,11 +394,15 @@ const createServerPlugin = async (
             }
 
             const stat = fs.statSync(absPath);
-            if (stat.size > 10 * 1024 * 1024) {
-              log("debug", `skip large file (>10MB): ${absPath}`);
+            if (stat.size > unifiedConfig.max_file_size) {
+              log("debug", `skip large file (>${unifiedConfig.max_file_size} bytes): ${absPath}`);
               continue;
             }
             const content = fs.readFileSync(absPath, "utf8");
+            if (shouldSkipFile(absPath, excludes, content)) {
+              log("debug", `skip excluded file: ${absPath}`);
+              continue;
+            }
             files.push({ path: absPath, content, action });
           } catch (e) {
             log("debug", `read failed for ${fp}: ${String(e)}`);

@@ -80,9 +80,15 @@ run_python_tool() {
   python3 -c "
 import json, sys, os, shlex
 
+CHANGEZ_FILENAMES = ('report.js', 'session-init.js', 'changez/report')
+
 def is_changez_hook(hook):
+    if isinstance(hook, dict) and hook.get('command'):
+        cmd = hook['command']
+        return any(fn in cmd for fn in CHANGEZ_FILENAMES) or '/hooks/changez/' in cmd
     text = json.dumps(hook).lower()
-    return 'changez' in text
+    # Fallback: check path-like patterns (more specific than 'changez')
+    return '/changez/report' in text or '/changez/session-init' in text
 
 tool = sys.argv[1]
 dry_run = sys.argv[2] == 'true'
@@ -151,14 +157,9 @@ elif tool == 'remove':
                 f.write('\n')
 
 elif tool == 'build-patch':
-    url = sys.argv[3]
-    token = sys.argv[4]
-    source = sys.argv[5]
+    source = sys.argv[3]
 
-    env_parts = ['CHANGEZ_URL=' + shlex.quote(url), 'CHANGEZ_SOURCE=' + shlex.quote(source)]
-    if token:
-        env_parts.append('CHANGEZ_TOKEN=' + shlex.quote(token))
-    env_prefix = ' '.join(env_parts)
+    env_prefix = 'CHANGEZ_SOURCE=' + shlex.quote(source)
 
     patch = {
         'version': 1,
@@ -218,8 +219,22 @@ if [ "$UNINSTALL" = true ]; then
     fi
   fi
 
+  # 全局配置
+  if [ "$DRY_RUN" = true ]; then
+    dry "rm -f ${CHANGEZ_GLOBAL_CONFIG}"
+  else
+    if [ -f "$CHANGEZ_GLOBAL_CONFIG" ]; then
+      rm -f "$CHANGEZ_GLOBAL_CONFIG"
+      ok "已删除 ${CHANGEZ_GLOBAL_CONFIG}"
+    else
+      warn "${CHANGEZ_GLOBAL_CONFIG} 不存在，无需删除"
+    fi
+  fi
+
+  # 文件清理
   if [ "$DRY_RUN" = true ]; then
     dry "rm -f ${CURSOR_HOOKS_DIR}/report.js ${CURSOR_HOOKS_DIR}/session-init.js"
+    dry "rm -rf ${CURSOR_HOOKS_DIR}/lib"
   else
     removed=false
     for f in report.js session-init.js; do
@@ -228,6 +243,10 @@ if [ "$UNINSTALL" = true ]; then
         removed=true
       fi
     done
+    if [ -d "${CURSOR_HOOKS_DIR}/lib" ]; then
+      rm -rf "${CURSOR_HOOKS_DIR}/lib"
+      removed=true
+    fi
     if [ "$removed" = true ]; then
       ok "已删除 hook 脚本"
     else
@@ -246,19 +265,59 @@ fi
 
 # ── 安装模式 ───────────────────────────────────────────────────
 # ── 复制文件 ───────────────────────────────────────────────────
+CHANGEZ_GLOBAL_DIR="$HOME/.changez"
+CHANGEZ_GLOBAL_CONFIG="$CHANGEZ_GLOBAL_DIR/config.json"
+
+write_global_config() {
+  local url="$1"
+  local token="$2"
+
+  python3 -c "
+import json, sys, os
+config_dir = sys.argv[1]
+config_file = os.path.join(config_dir, 'config.json')
+os.makedirs(config_dir, exist_ok=True)
+existing = {}
+if os.path.exists(config_file):
+    try:
+        with open(config_file) as f:
+            existing = json.load(f)
+    except (json.JSONDecodeError, IOError):
+        existing = {}
+existing['url'] = sys.argv[2]
+existing['token'] = sys.argv[3]
+with open(config_file, 'w') as f:
+    json.dump(existing, f, indent=2, ensure_ascii=False)
+    f.write('\n')
+" "$CHANGEZ_GLOBAL_DIR" "$url" "$token"
+}
+
 if [ "$DRY_RUN" = true ]; then
   dry "mkdir -p ${CURSOR_HOOKS_DIR}"
+  dry "mkdir -p ${CURSOR_HOOKS_DIR}/lib"
+  dry "cp ${SCRIPT_DIR}/../lib/config.js ${CURSOR_HOOKS_DIR}/lib/config.js"
   dry "cp ${SCRIPT_DIR}/hooks/report.js ${CURSOR_HOOKS_DIR}/report.js"
   dry "cp ${SCRIPT_DIR}/hooks/session-init.js ${CURSOR_HOOKS_DIR}/session-init.js"
 else
-  mkdir -p "$CURSOR_HOOKS_DIR"
+  mkdir -p "$CURSOR_HOOKS_DIR/lib"
+  cp "${SCRIPT_DIR}/../lib/config.js" "${CURSOR_HOOKS_DIR}/lib/config.js"
   cp "${SCRIPT_DIR}/hooks/report.js" "${CURSOR_HOOKS_DIR}/report.js"
   cp "${SCRIPT_DIR}/hooks/session-init.js" "${CURSOR_HOOKS_DIR}/session-init.js"
   ok "安装 hook 脚本: ${CURSOR_HOOKS_DIR}/"
 fi
 
-# ── 生成 hooks.json ────────────────────────────────────────────
-HOOKS_PATCH="$(run_python_tool build-patch "$CHANGEZ_URL" "$CHANGEZ_TOKEN" "$CHANGEZ_SOURCE")"
+# ── 写入全局配置（url/token） ──────────────────────────────────
+if [ "$DRY_RUN" = true ]; then
+  dry "写入 ${CHANGEZ_GLOBAL_CONFIG}:"
+  dry "  url: ${CHANGEZ_URL}"
+  dry "  token: ${CHANGEZ_TOKEN}"
+else
+  write_global_config "$CHANGEZ_URL" "$CHANGEZ_TOKEN"
+  ok "全局配置已写入: ${CHANGEZ_GLOBAL_CONFIG}"
+fi
+
+# ── 生成 hooks.json（仅 source，无凭证） ────────────────────────
+HOOKS_PATCH="$(run_python_tool build-patch "$CHANGEZ_SOURCE")"
 
 info "生成 hooks.json..."
 

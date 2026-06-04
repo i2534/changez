@@ -21,6 +21,9 @@ const path = require("path")
 const CHANGEZ_URL        = process.env.CHANGEZ_URL        ?? "http://127.0.0.1:8760"
 const CHANGEZ_TOKEN      = process.env.CHANGEZ_TOKEN      ?? ""
 const CHANGEZ_SOURCE     = process.env.CHANGEZ_SOURCE     ?? "claudecode"
+
+// A4-fix: Daemon auth token for /hook endpoint protection
+const DAEMON_TOKEN       = process.env.DAEMON_TOKEN       ?? ""
 const CHANGEZ_LOG_FILE   = process.env.CHANGEZ_LOG_FILE   ?? ""
 const DAEMON_PORT        = parseInt(process.env.CHANGEZ_PORT ?? "8761", 10)
 const MAX_FILE_SIZE      = parseInt(process.env.CHANGEZ_MAX_FILE_SIZE ?? "10485760", 10)
@@ -230,6 +233,16 @@ const server = http.createServer(async (req, res) => {
 
   // POST /hook
   if (req.method === "POST" && req.url === "/hook") {
+    // A4: Daemon auth — reject unauthenticated requests when DAEMON_TOKEN is set
+    if (DAEMON_TOKEN) {
+      const token = req.headers["authorization"]?.replace("Bearer ", "") ?? ""
+      if (token !== DAEMON_TOKEN) {
+        res.writeHead(401, { "Content-Type": "application/json" })
+        res.end(JSON.stringify({ error: "unauthorized" }))
+        return
+      }
+    }
+
     let body = ""
     req.on("data", (chunk) => (body += chunk))
     req.on("end", async () => {

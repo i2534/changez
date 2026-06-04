@@ -20,8 +20,10 @@
 //     ]
 //   }
 
+import * as fs from "node:fs";
 import * as http from "node:http";
 import * as https from "node:https";
+import * as os from "node:os";
 import * as path from "node:path";
 import { createSignal, For, Show } from "solid-js";
 
@@ -33,6 +35,19 @@ import type {
   TuiSlotPlugin,
   TuiSlotContext,
 } from "@opencode-ai/plugin/tui";
+
+function loadGlobalConfig() {
+  const configPath = path.join(os.homedir(), ".changez", "config.json");
+  try {
+    if (fs.existsSync(configPath)) {
+      const content = fs.readFileSync(configPath, "utf8");
+      return JSON.parse(content);
+    }
+  } catch {
+    /* ignore */
+  }
+  return {};
+}
 
 type TuiConfig = {
   url: string;
@@ -207,9 +222,10 @@ const tui: TuiPlugin = async (
   options: PluginOptions,
   _meta: TuiPluginMeta,
 ): Promise<void> => {
+  const globalConfig = loadGlobalConfig();
   const cfg: TuiConfig = {
-    url: (options?.url as string) ?? "http://127.0.0.1:8760",
-    token: (options?.token as string) ?? undefined,
+    url: (options?.url as string) ?? globalConfig.url ?? "http://127.0.0.1:8760",
+    token: (options?.token as string) ?? globalConfig.token ?? undefined,
   };
 
   const [data, setData] = createSignal<SnapshotData | null>(null);

@@ -13,15 +13,23 @@
 const fs = require("fs")
 const path = require("path")
 
+const { loadConfig, shouldSkipFile, DEFAULTS } = require(path.join(__dirname, "lib", "config.js"))
+
 // ── 配置 ───────────────────────────────────────────────────────
-const CHANGEZ_URL        = process.env.CHANGEZ_URL        ?? "http://127.0.0.1:8760"
-const CHANGEZ_TOKEN      = process.env.CHANGEZ_TOKEN      ?? ""
-const CHANGEZ_SOURCE     = process.env.CHANGEZ_SOURCE     ?? "claudecode"
 const CHANGEZ_LOG_FILE   = process.env.CHANGEZ_LOG_FILE   ?? ""
-const MAX_FILE_SIZE      = parseInt(process.env.CHANGEZ_MAX_FILE_SIZE ?? "10485760", 10)
 const MAX_RETRIES        = parseInt(process.env.CHANGEZ_MAX_RETRIES ?? "2", 10)
 const RETRY_BASE_DELAY   = parseInt(process.env.CHANGEZ_RETRY_DELAY ?? "500", 10)
 const REQUEST_TIMEOUT    = 3000
+
+let unifiedConfig, excludes
+try {
+  const result = loadConfig(process.cwd(), { source: "claudecode" })
+  unifiedConfig = result.config
+  excludes = result.excludes
+} catch (e) {
+  unifiedConfig = { ...DEFAULTS }
+  excludes = [...DEFAULTS.excludes]
+}
 
 // ── 日志 ───────────────────────────────────────────────────────
 function log(level, msg) {
@@ -42,11 +50,11 @@ function sleep(ms) {
 // ── HTTP 请求工具（带重试）─────────────────────────────────────
 async function post(endpoint, body, maxRetries) {
   const headers = { "Content-Type": "application/json" }
-  if (CHANGEZ_TOKEN) headers["Authorization"] = `Bearer ${CHANGEZ_TOKEN}`
+  if (unifiedConfig.token) headers["Authorization"] = `Bearer ${unifiedConfig.token}`
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      const resp = await fetch(`${CHANGEZ_URL}${endpoint}`, {
+      const resp = await fetch(`${unifiedConfig.url}${endpoint}`, {
         method: "POST",
         headers,
         body: JSON.stringify(body),
@@ -128,8 +136,8 @@ async function handlePostToolUse(hook) {
   if (!content && fs.existsSync(filePath)) {
     try {
       const stat = fs.statSync(filePath)
-      if (stat.size > MAX_FILE_SIZE) {
-        log("debug", `skip large file (${stat.size} > ${MAX_FILE_SIZE}): ${filePath}`)
+      if (stat.size > unifiedConfig.max_file_size) {
+        log("debug", `skip large file (${stat.size} > ${unifiedConfig.max_file_size}): ${filePath}`)
         return
       }
       content = fs.readFileSync(filePath, "utf8")
@@ -141,17 +149,22 @@ async function handlePostToolUse(hook) {
 
   if (toolName === "Write" && content) {
     const size = Buffer.byteLength(content, "utf8")
-    if (size > MAX_FILE_SIZE) {
-      log("debug", `skip large file (${size} > ${MAX_FILE_SIZE}): ${filePath}`)
+    if (size > unifiedConfig.max_file_size) {
+      log("debug", `skip large file (${size} > ${unifiedConfig.max_file_size}): ${filePath}`)
       return
     }
+  }
+
+  if (shouldSkipFile(filePath, excludes, content)) {
+    log("debug", `skip excluded file: ${filePath}`)
+    return
   }
 
   log("debug", `reporting: ${filePath} (${action}, ${content ? Buffer.byteLength(content, "utf8") : 0} bytes)`)
 
   try {
     const resp = await post("/api/snapshot", {
-      source: CHANGEZ_SOURCE,
+      source: unifiedConfig.source,
       sessionId,
       files: [{ path: filePath, content: content ?? "", action }],
     }, MAX_RETRIES)

@@ -1,21 +1,30 @@
+"use strict";
+
 // session-init.js — sessionStart hook: register project + inject env vars
 //
 // Runtime: Node.js 18+ (built-in fetch, AbortSignal, process.stdin)
 // No external dependencies.
 
-const CHANGEZ_URL = process.env.CHANGEZ_URL || "http://127.0.0.1:8760";
-const CHANGEZ_TOKEN = process.env.CHANGEZ_TOKEN || "";
-const CHANGEZ_SOURCE = process.env.CHANGEZ_SOURCE || "cursor";
+const path = require("node:path");
+const { loadConfig, DEFAULTS } = require(path.join(__dirname, "lib", "config.js"));
 
-async function registerProject(workspaceRoot) {
+let unifiedConfig;
+try {
+  const result = loadConfig(process.cwd(), { source: "cursor" });
+  unifiedConfig = result.config;
+} catch (e) {
+  unifiedConfig = { ...DEFAULTS };
+}
+
+async function registerProject(workspaceRoot, cfg) {
   const projectName = workspaceRoot.split("/").pop() || "unknown";
   const headers = { "Content-Type": "application/json" };
-  if (CHANGEZ_TOKEN) {
-    headers["Authorization"] = `Bearer ${CHANGEZ_TOKEN}`;
+  if (cfg.token) {
+    headers["Authorization"] = `Bearer ${cfg.token}`;
   }
   for (let i = 0; i <= 2; i++) {
     try {
-      const resp = await fetch(`${CHANGEZ_URL}/api/projects`, {
+      const resp = await fetch(`${cfg.url}/api/projects`, {
         method: "POST",
         headers,
         body: JSON.stringify({ rootPath: workspaceRoot, name: projectName }),
@@ -43,14 +52,16 @@ async function main() {
 
   let projectResult = { status: "skipped" };
   if (workspaceRoot) {
-    projectResult = await registerProject(workspaceRoot);
+    projectResult = await registerProject(workspaceRoot, unifiedConfig);
   }
 
-  const output = {
+const maskedToken = unifiedConfig.token ? "***" : "";
+
+const output = {
     env: {
-      CHANGEZ_URL,
-      CHANGEZ_TOKEN,
-      CHANGEZ_SOURCE,
+      CHANGEZ_URL: unifiedConfig.url,
+      CHANGEZ_TOKEN: maskedToken,
+      CHANGEZ_SOURCE: unifiedConfig.source,
       CHANGEZ_SESSION_ID: sessionId,
       CHANGEZ_MODEL: model,
     },

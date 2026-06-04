@@ -96,11 +96,18 @@ mode = sys.argv[4]
 
 patch = json.loads(patch_str)
 
+CHANGEZ_PLUGIN_NAMES = (
+    '/.opencode/changez/',
+    '~/.opencode/changez/',
+)
+
 def is_changez_entry(item):
     if isinstance(item, list) and len(item) >= 1:
-        path = item[0]
-        if isinstance(path, str) and 'changez' in path:
-            return True
+        path_str = item[0]
+        if isinstance(path_str, str):
+            for name in CHANGEZ_PLUGIN_NAMES:
+                if name in path_str:
+                    return True
     return False
 
 def deep_merge(base, override):
@@ -158,29 +165,55 @@ else:
 }
 
 # ── 安全构建 JSON patch（python3，防注入）───────────────────────
+# 插件配置只保留路径，url/token/source 存入 ~/.changez/config.json
 build_plugin_patch() {
-  local url="$1"
-  local token="$2"
-  local source="$3"
-  local plugin_path="$4"
+  local plugin_path="$1"
 
   python3 -c "
 import json, sys
-patch = {'plugin': [['file://' + sys.argv[4], {'url': sys.argv[1], 'token': sys.argv[2], 'source': sys.argv[3], 'logLevel': 'info'}]]}
+patch = {'plugin': [['file://' + sys.argv[1], {}]]}
 print(json.dumps(patch, ensure_ascii=False))
-" "$url" "$token" "$source" "$plugin_path"
+" "$plugin_path"
 }
 
 build_tui_patch() {
   local tui_path="$1"
-  local url="$2"
-  local token="$3"
 
   python3 -c "
 import json, sys
-patch = {'plugin': [['file://' + sys.argv[1], {'url': sys.argv[2], 'token': sys.argv[3]}]]}
+patch = {'plugin': [['file://' + sys.argv[1], {}]]}
 print(json.dumps(patch, ensure_ascii=False))
-" "$tui_path" "$url" "$token"
+" "$tui_path"
+}
+
+# ── 全局 changez 配置 ──────────────────────────────────────────
+CHANGEZ_GLOBAL_DIR="$HOME/.changez"
+CHANGEZ_GLOBAL_CONFIG="$CHANGEZ_GLOBAL_DIR/config.json"
+
+write_global_config() {
+  local url="$1"
+  local token="$2"
+  local source="$3"
+
+  python3 -c "
+import json, sys, os
+config_dir = sys.argv[1]
+config_file = os.path.join(config_dir, 'config.json')
+os.makedirs(config_dir, exist_ok=True)
+existing = {}
+if os.path.exists(config_file):
+    try:
+        with open(config_file) as f:
+            existing = json.load(f)
+    except (json.JSONDecodeError, IOError):
+        existing = {}
+existing['url'] = sys.argv[2]
+existing['token'] = sys.argv[3]
+existing['source'] = sys.argv[4]
+with open(config_file, 'w') as f:
+    json.dump(existing, f, indent=2, ensure_ascii=False)
+    f.write('\n')
+" "$CHANGEZ_GLOBAL_DIR" "$url" "$token" "$source"
 }
 
 # ── 前置检查 ───────────────────────────────────────────────────
@@ -236,6 +269,18 @@ if [ "$UNINSTALL" = true ]; then
     fi
   fi
 
+  # 全局配置
+  if [ "$DRY_RUN" = true ]; then
+    dry "rm -f ${CHANGEZ_GLOBAL_CONFIG}"
+  else
+    if [ -f "$CHANGEZ_GLOBAL_CONFIG" ]; then
+      rm -f "$CHANGEZ_GLOBAL_CONFIG"
+      ok "已删除 ${CHANGEZ_GLOBAL_CONFIG}"
+    else
+      warn "${CHANGEZ_GLOBAL_CONFIG} 不存在，无需删除"
+    fi
+  fi
+
   # 文件清理
   if [ "$DRY_RUN" = true ]; then
     if [ "$SERVER_ONLY" = true ] && [ -f "${CHANGEZ_DIR}/changez.tui.tsx" ]; then
@@ -266,14 +311,17 @@ fi
 
 # ── 安装模式 ───────────────────────────────────────────────────
 info "安装路径: ${CHANGEZ_DIR}/"
-info "配置文件: ${OPENCODE_DIR}/"
+info "配置文件: ${CHANGEZ_GLOBAL_CONFIG}"
 
 # ── 复制 Server 插件 ───────────────────────────────────────────
 if [ "$DRY_RUN" = true ]; then
   dry "mkdir -p ${CHANGEZ_DIR}"
+  dry "mkdir -p ${CHANGEZ_DIR}/lib"
+  dry "cp ${SCRIPT_DIR}/../lib/config.js ${CHANGEZ_DIR}/lib/config.js"
   dry "cp ${SCRIPT_DIR}/changez.server.ts ${CHANGEZ_DIR}/changez.server.ts"
 else
-  mkdir -p "$CHANGEZ_DIR"
+  mkdir -p "$CHANGEZ_DIR/lib"
+  cp "${SCRIPT_DIR}/../lib/config.js" "${CHANGEZ_DIR}/lib/config.js"
   cp "${SCRIPT_DIR}/changez.server.ts" "${CHANGEZ_DIR}/changez.server.ts"
   ok "安装 Server 插件: ${CHANGEZ_DIR}/changez.server.ts"
 fi
@@ -288,6 +336,17 @@ if [ "$SERVER_ONLY" = false ]; then
   fi
 fi
 
+# ── 写入全局配置（url/token/source） ───────────────────────────
+if [ "$DRY_RUN" = true ]; then
+  dry "写入 ${CHANGEZ_GLOBAL_CONFIG}:"
+  dry "  url: ${CHANGEZ_URL}"
+  dry "  token: ${CHANGEZ_TOKEN}"
+  dry "  source: ${CHANGEZ_SOURCE}"
+else
+  write_global_config "$CHANGEZ_URL" "$CHANGEZ_TOKEN" "$CHANGEZ_SOURCE"
+  ok "全局配置已写入: ${CHANGEZ_GLOBAL_CONFIG}"
+fi
+
 # ── 确定配置文件 ───────────────────────────────────────────────
 if [ -f "${OPENCODE_DIR}/opencode.jsonc" ]; then
   CONFIG_FILE="${OPENCODE_DIR}/opencode.jsonc"
@@ -297,9 +356,9 @@ else
   CONFIG_FILE="${OPENCODE_DIR}/opencode.json"
 fi
 
-# ── 写入 Server 插件配置 ───────────────────────────────────────
+# ── 写入 Server 插件配置（仅路径，无凭证） ──────────────────────
 ABS_SERVER_PATH="${CHANGEZ_DIR}/changez.server.ts"
-PLUGIN_PATCH="$(build_plugin_patch "$CHANGEZ_URL" "$CHANGEZ_TOKEN" "$CHANGEZ_SOURCE" "$ABS_SERVER_PATH")"
+PLUGIN_PATCH="$(build_plugin_patch "$ABS_SERVER_PATH")"
 
 info "生成 Server 插件配置..."
 if [ "$DRY_RUN" = true ]; then
@@ -313,12 +372,12 @@ else
   ok "配置已写入: ${CONFIG_FILE}"
 fi
 
-# ── 写入 TUI 插件配置 ──────────────────────────────────────────
+# ── 写入 TUI 插件配置（仅路径，无凭证） ─────────────────────────
 if [ "$SERVER_ONLY" = false ]; then
   TUI_CONFIG_FILE="${OPENCODE_DIR}/tui.json"
   ABS_TUI_PATH="${CHANGEZ_DIR}/changez.tui.tsx"
 
-  TUI_PATCH="$(build_tui_patch "$ABS_TUI_PATH" "$CHANGEZ_URL" "$CHANGEZ_TOKEN")"
+  TUI_PATCH="$(build_tui_patch "$ABS_TUI_PATH")"
 
   info "生成 TUI 插件配置..."
   if [ "$DRY_RUN" = true ]; then

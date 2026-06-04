@@ -70,6 +70,87 @@ export CHANGEZ_LOG_FILE=""                     # 日志文件路径（可选）
 | `CHANGEZ_MAX_RETRIES` | `2` | 请求最大重试次数 |
 | `CHANGEZ_RETRY_DELAY` | `500` | 重试基础延迟（毫秒） |
 
+## 配置
+
+### 项目级配置
+
+在项目根目录创建 `.changez/config.json`：
+
+```json
+{
+  "url": "http://127.0.0.1:8760",
+  "token": "your-secret-token",
+  "source": "claudecode",
+  "max_file_size": 10485760,
+  "gitignore": true,
+  "excludes": [
+    "data/",
+    "node_modules/",
+    "*.delta",
+    "*.db"
+  ]
+}
+```
+
+### 全局配置
+
+在 `~/.changez/config.json` 中配置全局默认值：
+
+```json
+{
+  "url": "http://127.0.0.1:8760",
+  "token": "your-secret-token"
+}
+```
+
+### 环境变量
+
+| 变量 | 配置字段 |
+|---|---|
+| `CHANGEZ_URL` | `url` |
+| `CHANGEZ_TOKEN` | `token` |
+| `CHANGEZ_SOURCE` | `source` |
+| `CHANGEZ_MAX_FILE_SIZE` | `max_file_size` |
+| `CHANGEZ_LOG_LEVEL` | `log_level` |
+| `CHANGEZ_GITIGNORE` | `gitignore` |
+| `CHANGEZ_EXCLUDES` | `excludes`（逗号分隔） |
+
+### 配置优先级
+
+```
+项目级配置 (.changez/config.json)
+    ↓ 逐字段覆盖
+环境变量 (CHANGEZ_*)
+    ↓ 逐字段覆盖
+全局配置 (~/.changez/config.json)
+    ↓ 逐字段覆盖
+硬编码默认值
+```
+
+### 配置字段
+
+| 字段 | 默认值 | 说明 |
+|---|---|---|
+| `url` | `http://127.0.0.1:8760` | Changez 服务器地址 |
+| `token` | `""` | Bearer Token |
+| `source` | `claudecode` | 来源标识 |
+| `max_file_size` | `10485760` | 单文件最大字节数 |
+| `log_level` | `info` | 日志级别 |
+| `gitignore` | `true` | 是否包含 `.gitignore` 排除模式 |
+| `excludes` | 见默认列表 | 排除模式列表（`.gitignore` 语法） |
+
+### `excludes` 默认列表
+
+```
+data/, node_modules/, .git/, vendor/, dist/, build/,
+*.delta, *.db, *.sqlite, *.blob,
+*.png, *.jpg, *.jpeg, *.gif, *.ico, *.bmp, *.webp,
+*.zip, *.tar, *.gz, *.bz2, *.xz,
+*.pdf, *.exe, *.dll, *.so, *.dylib, *.bin,
+*.class, *.pyc, *.wasm,
+*.woff, *.woff2, *.ttf, *.otf, *.eot
+```
+
 ### 3. 配置 Claude Code Hook
 
 在项目或全局的 `.claude/settings.json` 中添加：

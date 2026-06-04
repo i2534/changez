@@ -108,9 +108,15 @@ run_python_tool() {
   python3 -c "
 import json, sys, os
 
+CHANGEZ_FILENAMES = ('/changez/', 'changez-hook', '.claude/changez/')
+
 def is_changez_hook(hook):
+    if isinstance(hook, dict) and hook.get('command'):
+        cmd = hook['command']
+        return any(fn in cmd for fn in CHANGEZ_FILENAMES)
     text = json.dumps(hook).lower()
-    return 'changez' in text
+    # Fallback: check path-like patterns (more specific than 'changez')
+    return '/.claude/changez/' in text or '.claude-changez' in text
 
 def merge_hooks(base_hooks, new_hooks):
     result = base_hooks.copy() if base_hooks else {}
@@ -194,15 +200,11 @@ elif tool == 'remove-hooks':
 elif tool == 'build-hook-patch':
     import shlex
     hook_path = sys.argv[3]
-    url = sys.argv[4]
-    token = sys.argv[5]
-    source = sys.argv[6]
-    daemon = sys.argv[7] == 'true'
-    log_file = sys.argv[8]
+    source = sys.argv[4]
+    daemon = sys.argv[5] == 'true'
+    log_file = sys.argv[6]
 
-    env_parts = ['CHANGEZ_URL=' + shlex.quote(url), 'CHANGEZ_SOURCE=' + shlex.quote(source)]
-    if token:
-        env_parts.append('CHANGEZ_TOKEN=' + shlex.quote(token))
+    env_parts = ['CHANGEZ_SOURCE=' + shlex.quote(source)]
     if log_file:
         env_parts.append('CHANGEZ_LOG_FILE=' + shlex.quote(log_file))
     env_prefix = ' '.join(env_parts)
@@ -266,6 +268,32 @@ fi
 
 CHANGEZ_DIR="${CLAUDE_DIR}/changez"
 SETTINGS_FILE="${CLAUDE_DIR}/settings.json"
+CHANGEZ_GLOBAL_DIR="$HOME/.changez"
+CHANGEZ_GLOBAL_CONFIG="$CHANGEZ_GLOBAL_DIR/config.json"
+
+write_global_config() {
+  local url="$1"
+  local token="$2"
+
+  python3 -c "
+import json, sys, os
+config_dir = sys.argv[1]
+config_file = os.path.join(config_dir, 'config.json')
+os.makedirs(config_dir, exist_ok=True)
+existing = {}
+if os.path.exists(config_file):
+    try:
+        with open(config_file) as f:
+            existing = json.load(f)
+    except (json.JSONDecodeError, IOError):
+        existing = {}
+existing['url'] = sys.argv[2]
+existing['token'] = sys.argv[3]
+with open(config_file, 'w') as f:
+    json.dump(existing, f, indent=2, ensure_ascii=False)
+    f.write('\n')
+" "$CHANGEZ_GLOBAL_DIR" "$url" "$token"
+}
 
 # ── 卸载模式 ───────────────────────────────────────────────────
 if [ "$UNINSTALL" = true ]; then
@@ -285,6 +313,19 @@ if [ "$UNINSTALL" = true ]; then
     fi
   fi
 
+  # 全局配置
+  if [ "$DRY_RUN" = true ]; then
+    dry "rm -f ${CHANGEZ_GLOBAL_CONFIG}"
+  else
+    if [ -f "$CHANGEZ_GLOBAL_CONFIG" ]; then
+      rm -f "$CHANGEZ_GLOBAL_CONFIG"
+      ok "已删除 ${CHANGEZ_GLOBAL_CONFIG}"
+    else
+      warn "${CHANGEZ_GLOBAL_CONFIG} 不存在，无需删除"
+    fi
+  fi
+
+  # 文件清理
   if [ "$DRY_RUN" = true ]; then
     dry "rm -rf ${CHANGEZ_DIR}"
   else
@@ -316,12 +357,15 @@ DAEMON_SRC="${SCRIPT_DIR}/changez-daemon.js"
 # ── 复制文件 ───────────────────────────────────────────────────
 if [ "$DRY_RUN" = true ]; then
   dry "mkdir -p ${CHANGEZ_DIR}"
+  dry "mkdir -p ${CHANGEZ_DIR}/lib"
+  dry "cp ${SCRIPT_DIR}/../lib/config.js ${CHANGEZ_DIR}/lib/config.js"
   dry "cp ${HOOK_SRC} ${CHANGEZ_DIR}/changez-hook.js"
   if [ "$DAEMON_MODE" = true ]; then
     dry "cp ${DAEMON_SRC} ${CHANGEZ_DIR}/changez-daemon.js"
   fi
 else
-  mkdir -p "$CHANGEZ_DIR"
+  mkdir -p "$CHANGEZ_DIR/lib"
+  cp "${SCRIPT_DIR}/../lib/config.js" "${CHANGEZ_DIR}/lib/config.js"
   cp "$HOOK_SRC" "$CHANGEZ_DIR/changez-hook.js"
   ok "安装 hook 脚本: ${CHANGEZ_DIR}/changez-hook.js"
 
@@ -331,9 +375,19 @@ else
   fi
 fi
 
-# ── 构建并写入 hook 配置 ───────────────────────────────────────
+# ── 写入全局配置（url/token） ──────────────────────────────────
+if [ "$DRY_RUN" = true ]; then
+  dry "写入 ${CHANGEZ_GLOBAL_CONFIG}:"
+  dry "  url: ${CHANGEZ_URL}"
+  dry "  token: ${CHANGEZ_TOKEN}"
+else
+  write_global_config "$CHANGEZ_URL" "$CHANGEZ_TOKEN"
+  ok "全局配置已写入: ${CHANGEZ_GLOBAL_CONFIG}"
+fi
+
+# ── 构建并写入 hook 配置（仅 source，无凭证） ───────────────────
 HOOK_PATH="${CHANGEZ_DIR}/changez-hook.js"
-HOOK_PATCH="$(run_python_tool build-hook-patch "$HOOK_PATH" "$CHANGEZ_URL" "$CHANGEZ_TOKEN" "$CHANGEZ_SOURCE" "$DAEMON_MODE" "$CHANGEZ_LOG_FILE")"
+HOOK_PATCH="$(run_python_tool build-hook-patch "$HOOK_PATH" "$CHANGEZ_SOURCE" "$DAEMON_MODE" "$CHANGEZ_LOG_FILE")"
 
 info "生成 Claude Code hook 配置..."
 

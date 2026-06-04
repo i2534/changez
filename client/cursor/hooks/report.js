@@ -1,16 +1,27 @@
+"use strict";
+
 // report.js — afterFileEdit hook: read file from filesystem → POST /api/snapshot
 //
 // Runtime: Node.js 18+ (built-in fetch, AbortSignal, process.stdin)
 // No external dependencies.
 
 const { readFileSync } = require("node:fs");
+const path = require("node:path");
 
-const CHANGEZ_URL = process.env.CHANGEZ_URL || "http://127.0.0.1:8760";
-const CHANGEZ_TOKEN = process.env.CHANGEZ_TOKEN || "";
-const CHANGEZ_SOURCE = process.env.CHANGEZ_SOURCE || "cursor";
-const MAX_FILE_SIZE = 10 * 1024 * 1024;
+const { loadConfig, shouldSkipFile, DEFAULTS } = require(path.join(__dirname, "lib", "config.js"));
+
 const MAX_RETRIES = 1;
 const RETRY_DELAY_MS = 500;
+
+let unifiedConfig, excludes;
+try {
+  const result = loadConfig(process.cwd(), { source: "cursor" });
+  unifiedConfig = result.config;
+  excludes = result.excludes;
+} catch (e) {
+  unifiedConfig = { ...DEFAULTS };
+  excludes = [...DEFAULTS.excludes];
+}
 
 async function fetchWithRetry(url, options) {
   for (let i = 0; i <= MAX_RETRIES; i++) {
@@ -49,24 +60,29 @@ async function main() {
     process.exit(0);
   }
 
-  if (Buffer.byteLength(content, "utf8") > MAX_FILE_SIZE) {
+  if (Buffer.byteLength(content, "utf8") > unifiedConfig.max_file_size) {
     process.stdout.write(JSON.stringify({ status: "skipped", reason: "file_too_large", file: filePath }) + "\n");
     process.exit(0);
   }
 
+  if (shouldSkipFile(filePath, excludes, content)) {
+    process.stdout.write(JSON.stringify({ status: "skipped", reason: "excluded", file: filePath }) + "\n");
+    process.exit(0);
+  }
+
   const body = {
-    source: CHANGEZ_SOURCE,
+    source: unifiedConfig.source,
     sessionId,
     model,
     files: [{ path: filePath, content, action: "update" }],
   };
 
   const headers = { "Content-Type": "application/json" };
-  if (CHANGEZ_TOKEN) {
-    headers["Authorization"] = `Bearer ${CHANGEZ_TOKEN}`;
+  if (unifiedConfig.token) {
+    headers["Authorization"] = `Bearer ${unifiedConfig.token}`;
   }
 
-  const resp = await fetchWithRetry(`${CHANGEZ_URL}/api/snapshot`, {
+  const resp = await fetchWithRetry(`${unifiedConfig.url}/api/snapshot`, {
     method: "POST",
     headers,
     body: JSON.stringify(body),
