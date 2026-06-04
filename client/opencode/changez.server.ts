@@ -258,12 +258,12 @@ const createServerPlugin = async (
   const projectName = cfg.project?.name ?? path.basename(projectRoot);
   const log = createLogger(client, cfg);
 
-  const pluginConfig = {
-    url: cfg.url,
-    token: cfg.token,
-    source: cfg.source,
-    log_level: cfg.logLevel,
-  };
+  // 只传非空值，避免空字符串覆盖全局配置 (~/.changez/config.json)
+  const pluginConfig = {};
+  if (cfg.url) pluginConfig.url = cfg.url;
+  if (cfg.token) pluginConfig.token = cfg.token;
+  if (cfg.source) pluginConfig.source = cfg.source;
+  if (cfg.logLevel) pluginConfig.log_level = cfg.logLevel;
   const { config: unifiedConfig, excludes, projectRoot: detectedRoot } = loadConfig(
     projectRoot,
     pluginConfig,
@@ -277,7 +277,7 @@ const createServerPlugin = async (
 
   const registerProject = async () => {
     try {
-      const res = await httpRequest(cfg, "POST", "/api/projects", {
+      const res = await httpRequest(unifiedConfig, "POST", "/api/projects", {
         rootPath: projectRoot,
         name: projectName,
       });
@@ -414,8 +414,8 @@ const createServerPlugin = async (
         // Fire-and-forget: don't block the tool execution
         void (async () => {
           try {
-            const res = await httpRequest(cfg, "POST", "/api/snapshot", {
-              source: cfg.source,
+            const res = await httpRequest(unifiedConfig, "POST", "/api/snapshot", {
+              source: unifiedConfig.source,
               sessionId: sessionID,
               model: model ?? "",
               files,

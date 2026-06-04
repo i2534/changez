@@ -79,13 +79,19 @@ export default function CodeView({
         )}
       </div>
       <div className="overflow-x-auto rounded-lg bg-gray-800">
-        <List
-          rowCount={lines.length}
-          rowHeight={ROW_HEIGHT}
-          rowComponent={CodeViewRowComponent}
-          rowProps={{ highlightLine }}
-          style={{ height: listHeight, width: "100%" }}
-        />
+        {content === "" ? (
+          <div className="flex h-[400px] items-center justify-center text-sm text-gray-500">
+            Empty file
+          </div>
+        ) : (
+          <List
+            rowCount={lines.length}
+            rowHeight={ROW_HEIGHT}
+            rowComponent={CodeViewRowComponent}
+            rowProps={{ highlightLine }}
+            style={{ height: listHeight, width: "100%" }}
+          />
+        )}
       </div>
     </div>
   );

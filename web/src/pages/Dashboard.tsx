@@ -5,6 +5,7 @@ import { Stats, ActivityResponse } from "../api/types";
 import StatCard from "../components/StatCard";
 import SourceBar from "../components/SourceBar";
 import ActivityFeed from "../components/ActivityFeed";
+import Skeleton from "../components/Skeleton";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 
@@ -66,11 +67,11 @@ function LoadingSkeleton() {
     <div className="space-y-6">
       <div className="grid gap-4 sm:grid-cols-3">
         {[1, 2, 3].map((i) => (
-          <div key={i} className="h-24 animate-pulse rounded-lg bg-gray-800" />
+          <Skeleton key={i} variant="card" />
         ))}
       </div>
-      <div className="h-40 animate-pulse rounded-lg bg-gray-800" />
-      <div className="h-64 animate-pulse rounded-lg bg-gray-800" />
+      <Skeleton variant="block" className="h-40" />
+      <Skeleton variant="block" />
     </div>
   );
 }

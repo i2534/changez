@@ -2,6 +2,7 @@ import { useState, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { relativeTime } from "../utils";
 import { File } from "../api/types";
+import { FileIcon, FolderIcon, FolderOpenIcon, TrashIcon, ChevronRight } from "./Icons";
 
 type TreeNode =
   | { type: "dir"; name: string; path: string; children: TreeNode[] }
@@ -124,7 +125,9 @@ function TreeNodeView({
         style={{ paddingLeft: `${depth * 16 + 8}px` }}
       >
         <span className="truncate text-sm text-gray-200">
-          <span className="mr-2">📄</span>
+          <span className="mr-2 inline-block text-gray-400">
+            <FileIcon size={14} />
+          </span>
           {node.name}
         </span>
         <div className="ml-4 flex shrink-0 items-center gap-3 text-xs text-gray-400">
@@ -141,7 +144,7 @@ function TreeNodeView({
               className="rounded px-1.5 py-0.5 text-gray-600 transition-colors hover:bg-red-600/20 hover:text-red-400"
               title={t("files.delete")}
             >
-              🗑
+              <TrashIcon size={14} />
             </button>
           )}
         </div>
@@ -158,11 +161,13 @@ function TreeNodeView({
         style={{ paddingLeft: `${depth * 16 + 8}px` }}
       >
         <span
-          className={`mr-1 inline-block transition-transform ${isExpanded ? "rotate-90" : ""}`}
+          className={`mr-1 inline-block text-gray-400 transition-transform ${isExpanded ? "rotate-90" : ""}`}
         >
-          ▶
+          <ChevronRight size={12} />
         </span>
-        <span className="mr-2">📁</span>
+        <span className="mr-2 inline-block text-gray-400">
+          {isExpanded ? <FolderOpenIcon size={14} /> : <FolderIcon size={14} />}
+        </span>
         <span className="text-sm text-gray-200">{node.name}</span>
       </button>
       {isExpanded && (
@@ -196,8 +201,8 @@ function TreeNodeList({
 }) {
   return (
     <>
-      {nodes.map((node, i) => {
-        const key = `${depth}-${node.type}-${node.name}-${i}`;
+      {nodes.map((node) => {
+        const key = node.type === "dir" ? `d:${node.path}` : `f:${node.file.path}`;
         return (
           <TreeNodeView
             key={key}

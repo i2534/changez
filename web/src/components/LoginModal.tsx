@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { setToken, api } from "../api/client";
 
@@ -13,6 +13,15 @@ export default function LoginModal({
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const { t } = useTranslation();
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [open, onClose]);
 
   if (!open) return null;
 

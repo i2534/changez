@@ -5,24 +5,20 @@ import { apiJSON } from "../api/client";
 import { File } from "../api/types";
 import FileList from "../components/FileList";
 import ConfirmDialog from "../components/ConfirmDialog";
+import Skeleton from "../components/Skeleton";
 import { toast } from "sonner";
 
 export default function Files() {
   const { project } = useParams<{ project: string }>();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const [files, setFiles] = useState<File[]>([]);
-  const [search, setSearch] = useState(searchParams.get("filter") || "");
   const [loading, setLoading] = useState(true);
   const [deleteTarget, setDeleteTarget] = useState<File | null>(null);
   const { t } = useTranslation();
 
   const projectName = decodeURIComponent(project || "");
-
-  // Sync URL filter param to search input when navigating between directory breadcrumbs
-  useEffect(() => {
-    setSearch(searchParams.get("filter") || "");
-  }, [searchParams]);
+  const search = searchParams.get("filter") || searchParams.get("search") || "";
 
   useEffect(() => {
     if (!projectName) return;
@@ -58,21 +54,19 @@ export default function Files() {
     return (
       <div className="space-y-2">
         {[1, 2, 3, 4, 5].map((i) => (
-          <div key={i} className="h-10 animate-pulse rounded bg-gray-800" />
+          <Skeleton key={i} variant="row" />
         ))}
       </div>
     );
   }
 
-  const filterPrefix = searchParams.get("filter") || "";
-
   return (
     <div>
       <div className="mb-2 text-sm text-gray-400">
         {t("files.project_label")}: <span className="text-gray-200">{projectName}</span>
-        {filterPrefix && (
+        {search && (
           <>
-            {" / "}<span className="text-gray-300">{filterPrefix.replace(/\/$/, "")}</span>
+            {" / "}<span className="text-gray-300">{search.replace(/\/$/, "")}</span>
           </>
         )}
         {" · "}
@@ -87,7 +81,12 @@ export default function Files() {
         }
         onFileDelete={(file) => setDeleteTarget(file)}
         searchQuery={search}
-        onSearchChange={setSearch}
+        onSearchChange={(q) => {
+          const params = new URLSearchParams(searchParams);
+          if (q) params.set("filter", q);
+          else params.delete("filter");
+          setSearchParams(params);
+        }}
       />
 
       <ConfirmDialog

@@ -1,3 +1,5 @@
+export { actionIcon } from "./components/Icons";
+
 export function relativeTime(dateStr: string, t?: (key: string, vars?: any) => string): string {
   try {
     const date = new Date(dateStr);
@@ -28,11 +30,6 @@ export function sourceColor(source: string): string {
     human: "bg-gray-400",
   };
   return map[source] || "bg-gray-500";
-}
-
-export function actionIcon(action: string): string {
-  if (action === "delete") return "■";
-  return "●";
 }
 
 export const LANG_MAP: Record<string, string> = {

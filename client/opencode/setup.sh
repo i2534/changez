@@ -168,12 +168,13 @@ else:
 # 插件配置只保留路径，url/token/source 存入 ~/.changez/config.json
 build_plugin_patch() {
   local plugin_path="$1"
+  local source="$2"
 
   python3 -c "
 import json, sys
-patch = {'plugin': [['file://' + sys.argv[1], {}]]}
+patch = {'plugin': [['file://' + sys.argv[1], {'source': sys.argv[2]}]]}
 print(json.dumps(patch, ensure_ascii=False))
-" "$plugin_path"
+" "$plugin_path" "$source"
 }
 
 build_tui_patch() {
@@ -193,7 +194,6 @@ CHANGEZ_GLOBAL_CONFIG="$CHANGEZ_GLOBAL_DIR/config.json"
 write_global_config() {
   local url="$1"
   local token="$2"
-  local source="$3"
 
   python3 -c "
 import json, sys, os
@@ -209,11 +209,10 @@ if os.path.exists(config_file):
         existing = {}
 existing['url'] = sys.argv[2]
 existing['token'] = sys.argv[3]
-existing['source'] = sys.argv[4]
 with open(config_file, 'w') as f:
     json.dump(existing, f, indent=2, ensure_ascii=False)
     f.write('\n')
-" "$CHANGEZ_GLOBAL_DIR" "$url" "$token" "$source"
+" "$CHANGEZ_GLOBAL_DIR" "$url" "$token"
 }
 
 # ── 前置检查 ───────────────────────────────────────────────────
@@ -343,7 +342,7 @@ if [ "$DRY_RUN" = true ]; then
   dry "  token: ${CHANGEZ_TOKEN}"
   dry "  source: ${CHANGEZ_SOURCE}"
 else
-  write_global_config "$CHANGEZ_URL" "$CHANGEZ_TOKEN" "$CHANGEZ_SOURCE"
+  write_global_config "$CHANGEZ_URL" "$CHANGEZ_TOKEN"
   ok "全局配置已写入: ${CHANGEZ_GLOBAL_CONFIG}"
 fi
 
@@ -358,7 +357,7 @@ fi
 
 # ── 写入 Server 插件配置（仅路径，无凭证） ──────────────────────
 ABS_SERVER_PATH="${CHANGEZ_DIR}/changez.server.ts"
-PLUGIN_PATCH="$(build_plugin_patch "$ABS_SERVER_PATH")"
+PLUGIN_PATCH="$(build_plugin_patch "$ABS_SERVER_PATH" "$CHANGEZ_SOURCE")"
 
 info "生成 Server 插件配置..."
 if [ "$DRY_RUN" = true ]; then

@@ -4,9 +4,11 @@ import { apiJSON } from "../api/client";
 import { DiffResponse } from "../api/types";
 import DiffViewer from "../components/DiffViewer";
 import CodeView from "../components/CodeView";
+import Skeleton from "../components/Skeleton";
 import { useFileContent } from "../hooks/useFileContent";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
+import { CloseIcon } from "../components/Icons";
 
 export default function DiffPage() {
   const { project, path } = useParams<{ project: string; path: string }>();
@@ -50,9 +52,7 @@ export default function DiffPage() {
   }
 
   if (loading) {
-    return (
-      <div className="h-64 animate-pulse rounded-lg bg-gray-800" />
-    );
+    return <Skeleton variant="block" />;
   }
 
   const handleBack = () => {
@@ -65,39 +65,26 @@ export default function DiffPage() {
 
   return (
     <div>
-      <nav className="mb-3 flex flex-wrap items-center gap-1 text-sm text-gray-400">
+      <div className="mb-4 flex flex-wrap items-center gap-2">
         <button
           onClick={handleBack}
-          className="hover:text-gray-200"
+          className="rounded bg-gray-700 px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-600"
         >
           {t("diff.back")}
         </button>
-        <span>/</span>
         <button
-          onClick={() => navigate(`/projects/${encodeURIComponent(projectName)}`)}
-          className="hover:text-gray-200"
+          onClick={() => fetchContent(from)}
+          className="rounded bg-gray-700 px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-600"
         >
-          {projectName}
+          {t("diff.view_content", { version: from })}
         </button>
-        <span>/</span>
         <button
-          onClick={() => navigate(`/projects/${encodeURIComponent(projectName)}/files`)}
-          className="hover:text-gray-200"
+          onClick={() => fetchContent(to)}
+          className="rounded bg-gray-700 px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-600"
         >
-          {t("layout.files")}
+          {t("diff.view_content", { version: to })}
         </button>
-        <span>/</span>
-        <button
-          onClick={() => navigate(`/projects/${encodeURIComponent(projectName)}/files/${encodeURIComponent(filePath)}`)}
-          className="hover:text-gray-200"
-        >
-          {filePath}
-        </button>
-        <span>/</span>
-        <span className="font-medium text-gray-200">
-          {t("layout.diff")} (v{from} → v{to})
-        </span>
-      </nav>
+      </div>
 
       {content && (
         <div className="mb-4">
@@ -109,31 +96,15 @@ export default function DiffPage() {
               onClick={() => clearContent()}
               className="text-xs text-gray-500 hover:text-gray-300"
             >
-              ✕
+              <CloseIcon size={14} />
             </button>
           </div>
           <CodeView content={content.content} filePath={filePath} />
         </div>
       )}
 
-      {diffData && (
-        <>
-          <DiffViewer diff={diffData.diff} fromVersion={from} toVersion={to} />
-          <div className="mt-3 flex gap-2">
-            <button
-              onClick={() => fetchContent(from)}
-              className="rounded bg-gray-700 px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-600"
-         >
-               {t("diff.view_content", { version: from })}
-             </button>
-            <button
-              onClick={() => fetchContent(to)}
-              className="rounded bg-gray-700 px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-600"
-        >
-               {t("diff.view_content", { version: to })}
-             </button>
-          </div>
-        </>
+     {diffData && (
+        <DiffViewer diff={diffData.diff} fromVersion={from} toVersion={to} />
       )}
     </div>
   );

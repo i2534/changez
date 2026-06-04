@@ -45,8 +45,8 @@
     "all_sources": "All Sources",
     "all_actions": "All Actions",
     "no_versions_match": "No versions match filters.",
-    "show_details": "▶ Show details",
-    "hide_details": "▼ Hide details",
+    "show_details": "Show details",
+    "hide_details": "Hide details",
     "session": "Session:",
     "model": "Model:",
     "message": "Message:",
@@ -68,7 +68,7 @@
     "collapse_content": "Collapse content",
     "failed_to_load": "Failed to load versions",
     "failed_to_load_content": "Failed to load content",
-    "corrupted_restore": "无法恢复 v{{version}}：该版本数据已损坏（delta 链不完整）"
+    "corrupted_restore": "Cannot restore v{{version}}: version data is corrupted (incomplete delta chain)"
   },
   "diff": {
     "back": "← Back",
@@ -76,7 +76,7 @@
     "view_content": "View v{{version}} Content",
     "failed_to_load": "Failed to load diff",
     "failed_to_load_content": "Failed to load content",
-    "corrupted_view": "无法查看 v{{version}}：该版本数据已损坏（delta 链不完整）"
+    "corrupted_view": "Cannot view v{{version}}: version data is corrupted (incomplete delta chain)"
   },
   "login": {
     "title": "Authentication Required",
@@ -101,5 +101,15 @@
     "min_ago": "{{count}} min ago",
     "hr_ago": "{{count}} hr ago",
     "day_ago": "{{count}} day ago"
+  },
+  "errorBoundary": {
+    "title": "Something went wrong",
+    "message": "An unexpected error occurred",
+    "reload": "Reload"
+  },
+  "notFound": {
+    "title": "404 - Page Not Found",
+    "message": "The page you're looking for doesn't exist.",
+    "goHome": "Go Home"
   }
 }

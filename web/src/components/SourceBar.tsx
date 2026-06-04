@@ -30,7 +30,7 @@ export default function SourceBar({
                 />
               </div>
               <span className="w-16 text-sm text-gray-300">
-                {count.toLocaleString()}
+                {count.toLocaleString()} ({pct}%)
               </span>
             </div>
           );

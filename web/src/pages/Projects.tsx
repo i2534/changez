@@ -5,6 +5,8 @@ import { apiJSON } from "../api/client";
 import { Project } from "../api/types";
 import { toast } from "sonner";
 import ConfirmDialog from "../components/ConfirmDialog";
+import { TrashIcon } from "../components/Icons";
+import Skeleton from "../components/Skeleton";
 
 export default function Projects() {
   const { t } = useTranslation();
@@ -52,7 +54,7 @@ export default function Projects() {
     return (
       <div className="space-y-3">
         {[1, 2, 3].map((i) => (
-          <div key={i} className="h-20 animate-pulse rounded-lg bg-gray-800" />
+          <Skeleton key={i} variant="card" className="h-20" />
         ))}
       </div>
     );
@@ -101,7 +103,7 @@ export default function Projects() {
                 className="flex items-center px-3 py-3 text-gray-600 transition-colors hover:bg-red-600/20 hover:text-red-400"
                 title={t("projects.delete")}
               >
-                🗑
+                <TrashIcon size={14} />
               </button>
             </div>
           ))}

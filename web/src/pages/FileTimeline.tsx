@@ -3,6 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { apiJSON } from "../api/client";
 import { VersionResponse } from "../api/types";
 import Timeline from "../components/Timeline";
+import Skeleton from "../components/Skeleton";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 
@@ -72,7 +73,7 @@ export default function FileTimeline() {
     return (
       <div className="space-y-3">
         {[1, 2, 3, 4, 5].map((i) => (
-          <div key={i} className="h-16 animate-pulse rounded-lg bg-gray-800" />
+          <Skeleton key={i} variant="timeline" />
         ))}
       </div>
     );

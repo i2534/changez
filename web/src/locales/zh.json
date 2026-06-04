@@ -45,8 +45,8 @@
     "all_sources": "全部来源",
     "all_actions": "全部操作",
     "no_versions_match": "没有匹配的版本。",
-    "show_details": "▶ 显示详情",
-    "hide_details": "▼ 隐藏详情",
+    "show_details": "显示详情",
+    "hide_details": "隐藏详情",
     "session": "会话：",
     "model": "模型：",
     "message": "消息：",
@@ -101,5 +101,15 @@
     "min_ago": "{{count}} 分钟前",
     "hr_ago": "{{count}} 小时前",
     "day_ago": "{{count}} 天前"
+  },
+  "errorBoundary": {
+    "title": "出错了",
+    "message": "发生了意外错误",
+    "reload": "重新加载"
+  },
+  "notFound": {
+    "title": "404 - 页面未找到",
+    "message": "你要查找的页面不存在。",
+    "goHome": "返回首页"
   }
 }

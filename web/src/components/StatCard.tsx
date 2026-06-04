@@ -10,8 +10,8 @@ export default function StatCard({
   return (
     <button
       onClick={onClick}
-      className={`rounded-lg bg-gray-800 p-5 text-left transition-colors ${
-        onClick ? "cursor-pointer hover:bg-gray-700 hover:shadow-lg" : "cursor-default"
+      className={`rounded-lg bg-gray-800 p-5 text-left transition-all ${
+        onClick ? "cursor-pointer hover:bg-gray-700 hover:shadow-lg active:scale-95" : "cursor-default"
       }`}
     >
       <div className="text-2xl font-bold text-gray-100">{value.toLocaleString()}</div>
