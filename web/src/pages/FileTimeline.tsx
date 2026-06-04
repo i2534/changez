@@ -1,9 +1,8 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { apiJSON } from "../api/client";
-import { VersionResponse, RestoreResponse } from "../api/types";
+import { VersionResponse } from "../api/types";
 import Timeline from "../components/Timeline";
-import CodeView from "../components/CodeView";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 
@@ -12,8 +11,8 @@ export default function FileTimeline() {
   const navigate = useNavigate();
   const [response, setResponse] = useState<VersionResponse | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [lastClickedId, setLastClickedId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
-   const [content, setContent] = useState<{ version: number; content: string } | null>(null);
   const { t } = useTranslation();
 
   const projectName = decodeURIComponent(project || "");
@@ -22,8 +21,8 @@ export default function FileTimeline() {
   useEffect(() => {
     if (!projectName || !filePath) return;
     const abort = new AbortController();
-    setContent(null);
     setSelectedIds([]);
+    setLastClickedId(null);
     setLoading(true);
     apiJSON<VersionResponse>(
       `/api/files/versions?path=${encodeURIComponent(filePath)}`, { signal: abort.signal }
@@ -35,16 +34,26 @@ export default function FileTimeline() {
       })
       .finally(() => setLoading(false));
     return () => abort.abort();
-  }, [projectName, filePath, t]);
+  }, [projectName, filePath]);
 
-  const handleVersionClick = (id: number) => {
+  const handleVersionClick = (id: number, shiftKey: boolean) => {
     setSelectedIds((prev) => {
       if (prev.includes(id)) {
+        setLastClickedId(id);
         return prev.filter((v) => v !== id);
       }
+      if (shiftKey && lastClickedId !== null) {
+        const base = prev[0] ?? lastClickedId;
+        const start = Math.min(base, id);
+        const end = Math.max(base, id);
+        setLastClickedId(id);
+        return [start, end];
+      }
       if (prev.length >= 2) {
+        setLastClickedId(id);
         return [prev[1], id];
       }
+      setLastClickedId(id);
       return [...prev, id];
     });
   };
@@ -53,22 +62,6 @@ export default function FileTimeline() {
     navigate(
       `/projects/${encodeURIComponent(projectName)}/files/${encodeURIComponent(filePath)}/diff?from=${from}&to=${to}`
     );
-  };
-
-  const handleViewContent = async (versionId: number) => {
-    try {
-      const data = await apiJSON<RestoreResponse>(
-        `/api/files/restore?path=${encodeURIComponent(filePath)}&version=${versionId}`
-      );
-      setContent({ version: data.version, content: data.content });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : t("timeline.failed_to_load_content");
-      if (msg.includes("CORRUPTED_DATA") || msg.includes("base_id")) {
-        toast.error(t("timeline.corrupted_restore", { version: versionId }));
-      } else {
-        toast.error(msg);
-      }
-    }
   };
 
   if (!projectName || !filePath) {
@@ -99,54 +92,13 @@ export default function FileTimeline() {
         <span>{t("timeline.project_label")}: {projectName}</span>
       </div>
 
-      {content && (
-        <div className="mb-4">
-          <div className="mb-2 flex items-center justify-between">
-            <span className="text-sm text-gray-400">
-              {t("timeline.content_at_v", { version: content.version })}
-            </span>
-            <button
-              onClick={() => setContent(null)}
-              className="text-xs text-gray-500 hover:text-gray-300"
-            >
-              ✕
-            </button>
-          </div>
-          <CodeView content={content.content} filePath={filePath} />
-        </div>
-      )}
-
       <Timeline
         entries={response.versions}
         selectedIds={selectedIds}
+        filePath={filePath}
         onVersionClick={handleVersionClick}
         onDiff={handleDiff}
       />
-
-      {selectedIds.length === 1 && (
-        <div className="mt-3 flex gap-2">
-          <button
-            onClick={() => handleViewContent(selectedIds[0])}
-            className="rounded bg-gray-700 px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-600"
-          >
-            {t("timeline.view_content", { version: selectedIds[0] })}
-          </button>
-          <button
-            onClick={() => {
-              apiJSON<RestoreResponse>(
-                `/api/files/restore?path=${encodeURIComponent(filePath)}&version=${selectedIds[0]}`
-              ).then((data) => {
-                  navigator.clipboard.writeText(data.content).then(() => {
-                    toast.success(t("timeline.copied"));
-                  });
-              });
-            }}
-            className="rounded bg-gray-700 px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-600"
-          >
-            {t("timeline.copy_clipboard", { version: selectedIds[0] })}
-          </button>
-        </div>
-      )}
     </div>
   );
 }

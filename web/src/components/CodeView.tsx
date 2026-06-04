@@ -4,38 +4,10 @@ import "prismjs/components/prism-typescript.min.js";
 import "prismjs/components/prism-go.min.js";
 import "prismjs/components/prism-markup.min.js";
 import "prismjs/components/prism-bash.min.js";
-import { useMemo } from "react";
-
-const LANG_MAP: Record<string, string> = {
-  ".ts": "typescript",
-  ".tsx": "typescript",
-  ".js": "javascript",
-  ".jsx": "javascript",
-  ".go": "go",
-  ".md": "markup",
-  ".sh": "bash",
-  ".bash": "bash",
-  ".yaml": "yaml",
-  ".yml": "yaml",
-  ".json": "json",
-  ".toml": "ini",
-  ".ini": "ini",
-  ".css": "css",
-  ".html": "markup",
-  ".xml": "markup",
-};
-
-function detectLanguage(filePath: string): string | null {
-  const ext = filePath.slice(filePath.lastIndexOf("."));
-  return LANG_MAP[ext] || null;
-}
-
-function highlightLine(text: string, lang: string): string {
-  const grammar = Prism.languages[lang as keyof typeof Prism.languages];
-  if (!grammar) return escapeHtml(text);
-  const tokenized = Prism.tokenize(text, grammar);
-  return Prism.Token.stringify(tokenized, lang);
-}
+import { useCallback, useRef } from "react";
+import type { RowComponentProps } from "react-window";
+import { List } from "react-window";
+import { detectLanguage } from "../utils";
 
 function escapeHtml(text: string): string {
   return text
@@ -44,20 +16,57 @@ function escapeHtml(text: string): string {
     .replace(/>/g, "&gt;");
 }
 
+const ROW_HEIGHT = 22;
+const AUTO_HEIGHT = 400;
+const MAX_HEIGHT = 800;
+
+const CodeViewRowComponent = ({ index, style, highlightLine }: RowComponentProps<{ highlightLine: (index: number) => string }>) => (
+  <div style={style} className="flex hover:bg-gray-700">
+    <div className="select-none border-r border-gray-700 bg-gray-800 px-3 text-right text-xs text-gray-500" style={{ height: ROW_HEIGHT, lineHeight: `${ROW_HEIGHT}px` }}>
+      {index + 1}
+    </div>
+    <div
+      className="flex-1 whitespace-pre font-mono text-sm text-gray-200 px-3"
+      style={{ height: ROW_HEIGHT, lineHeight: `${ROW_HEIGHT}px` }}
+      dangerouslySetInnerHTML={{ __html: highlightLine(index) || "\u00A0" }}
+    />
+  </div>
+);
+
 export default function CodeView({
   content,
   filePath,
+  height,
 }: {
   content: string;
   filePath: string;
+  height?: number;
 }) {
   const lang = detectLanguage(filePath);
+  const lines = content.split("\n");
+  const grammar = lang ? Prism.languages[lang as keyof typeof Prism.languages] : null;
 
-  const highlightedLines = useMemo(() => {
-    const lines = content.split("\n");
-    if (!lang) return lines.map(escapeHtml);
-    return lines.map((line) => highlightLine(line, lang));
-  }, [content, lang]);
+  const highlightCache = useRef(new Map<number, string>());
+
+  const highlightLine = useCallback(
+    (index: number): string => {
+      const cached = highlightCache.current.get(index);
+      if (cached !== undefined) return cached;
+      const text = lines[index];
+      let result: string;
+      if (grammar) {
+        const tokenized = Prism.tokenize(text, grammar);
+        result = Prism.Token.stringify(tokenized, lang!);
+      } else {
+        result = escapeHtml(text);
+      }
+      highlightCache.current.set(index, result);
+      return result;
+    },
+    [grammar, lang, lines],
+  );
+
+   const listHeight = height ?? Math.min(Math.max(lines.length * ROW_HEIGHT, AUTO_HEIGHT), MAX_HEIGHT);
 
   return (
     <div>
@@ -70,21 +79,13 @@ export default function CodeView({
         )}
       </div>
       <div className="overflow-x-auto rounded-lg bg-gray-800">
-        <table className="w-full">
-          <tbody>
-            {highlightedLines.map((line, i) => (
-              <tr key={i} className="hover:bg-gray-750">
-                <td className="select-none border-r border-gray-700 bg-gray-800 px-3 py-0.5 text-right text-xs text-gray-500">
-                  {i + 1}
-                </td>
-                <td
-                  className="whitespace-pre font-mono text-sm text-gray-200 px-3 py-0.5"
-                  dangerouslySetInnerHTML={{ __html: line || "\u00A0" }}
-                />
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <List
+          rowCount={lines.length}
+          rowHeight={ROW_HEIGHT}
+          rowComponent={CodeViewRowComponent}
+          rowProps={{ highlightLine }}
+          style={{ height: listHeight, width: "100%" }}
+        />
       </div>
     </div>
   );

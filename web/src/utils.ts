@@ -34,3 +34,27 @@ export function actionIcon(action: string): string {
   if (action === "delete") return "■";
   return "●";
 }
+
+export const LANG_MAP: Record<string, string> = {
+  ".ts": "typescript",
+  ".tsx": "typescript",
+  ".js": "javascript",
+  ".jsx": "javascript",
+  ".go": "go",
+  ".md": "markup",
+  ".sh": "bash",
+  ".bash": "bash",
+  ".yaml": "yaml",
+  ".yml": "yaml",
+  ".json": "json",
+  ".toml": "ini",
+  ".ini": "ini",
+  ".css": "css",
+  ".html": "markup",
+  ".xml": "markup",
+};
+
+export function detectLanguage(filePath: string): string | null {
+  const ext = filePath.slice(filePath.lastIndexOf("."));
+  return LANG_MAP[ext] || null;
+}
