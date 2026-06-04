@@ -108,17 +108,14 @@ func (h *Handler) doDiff(ctx context.Context, path string, versionA, versionB in
 		return "", fmt.Errorf("version %d does not belong to this file", versionB)
 	}
 
-	if verA["action"].(string) == "delete" {
-		return "", fmt.Errorf("version %d is deleted", versionA)
-	}
-	if verB["action"].(string) == "delete" {
-		return "", fmt.Errorf("version %d is deleted", versionB)
-	}
+	// 允许 delete 版本参与 diff，delete 版本的内容视为空字符串
+	isDeletedA := verA["action"].(string) == "delete"
+	isDeletedB := verB["action"].(string) == "delete"
 
 	var diffs []diffmatchpatch.Diff
 	isAdjacentDelta := false
 
-	if verB["storageMode"].(string) == "delta" {
+	if !isDeletedA && !isDeletedB && verB["storageMode"].(string) == "delta" {
 		if baseID, ok := asInt64Ptr(verB["baseID"]); ok && baseID == verA["id"].(int64) {
 			if offset, ok := asInt64Ptr(verB["deltaOffset"]); ok {
 				_, readDiffs, _, err := h.DeltaStore.ReadEntry(fileID, offset)
@@ -131,13 +128,20 @@ func (h *Handler) doDiff(ctx context.Context, path string, versionA, versionB in
 	}
 
 	if !isAdjacentDelta {
-		contentA, err := h.rebuildContent(ctx, verA)
-		if err != nil {
-			return "", fmt.Errorf("rebuild version %d: %w", versionA, err)
+		var contentA, contentB []byte
+		if !isDeletedA {
+			var err error
+			contentA, err = h.rebuildContent(ctx, verA)
+			if err != nil {
+				return "", fmt.Errorf("rebuild version %d: %w", versionA, err)
+			}
 		}
-		contentB, err := h.rebuildContent(ctx, verB)
-		if err != nil {
-			return "", fmt.Errorf("rebuild version %d: %w", versionB, err)
+		if !isDeletedB {
+			var err error
+			contentB, err = h.rebuildContent(ctx, verB)
+			if err != nil {
+				return "", fmt.Errorf("rebuild version %d: %w", versionB, err)
+			}
 		}
 
 		dmp := diffmatchpatch.New()

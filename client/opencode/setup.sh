@@ -207,8 +207,13 @@ if os.path.exists(config_file):
             existing = json.load(f)
     except (json.JSONDecodeError, IOError):
         existing = {}
-existing['url'] = sys.argv[2]
-existing['token'] = sys.argv[3]
+# 只更新非空值，保留已有的 token（防止 setup.sh --server-only 覆盖）
+new_url = sys.argv[2]
+new_token = sys.argv[3]
+if new_url:
+    existing['url'] = new_url
+if new_token:
+    existing['token'] = new_token
 with open(config_file, 'w') as f:
     json.dump(existing, f, indent=2, ensure_ascii=False)
     f.write('\n')
@@ -336,10 +341,11 @@ if [ "$SERVER_ONLY" = false ]; then
 fi
 
 # ── 写入全局配置（url/token/source） ───────────────────────────
+# 注意：只更新非空值，保留已有的 token（防止 --server-only 覆盖）
 if [ "$DRY_RUN" = true ]; then
   dry "写入 ${CHANGEZ_GLOBAL_CONFIG}:"
-  dry "  url: ${CHANGEZ_URL}"
-  dry "  token: ${CHANGEZ_TOKEN}"
+  dry "  url: ${CHANGEZ_URL:-<保留现有值>}"
+  dry "  token: ${CHANGEZ_TOKEN:-<保留现有值>}"
   dry "  source: ${CHANGEZ_SOURCE}"
 else
   write_global_config "$CHANGEZ_URL" "$CHANGEZ_TOKEN"

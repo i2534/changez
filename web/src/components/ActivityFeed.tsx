@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { relativeTime, sourceColor, actionIcon } from "../utils";
+import { relativeTime, sourceColor, ActionIcon } from "../utils";
 import { ActivityItem } from "../api/types";
 
 function groupConsecutive(items: ActivityItem[]): ActivityGroup[] {
@@ -85,16 +85,8 @@ export default function ActivityFeed({
               >
                 {group.source}
               </span>
-              <span className="flex-shrink-0 text-xs text-gray-400">
-                {isMerged ? (
-                  <span title={actionSummary.detail}>
-                    {actionIcon(group.firstAction)} {actionSummary.short}
-                  </span>
-                ) : (
-                  <>
-                    {actionIcon(group.firstAction)} {group.firstAction}
-                  </>
-                )}
+              <span className="flex-shrink-0 text-xs text-gray-400" title={isMerged ? actionSummary.detail : undefined}>
+                <ActionIcon action={group.firstAction} /> {isMerged ? actionSummary.short : group.firstAction}
               </span>
               <span className="truncate text-sm text-gray-300">
                 {group.filePath}

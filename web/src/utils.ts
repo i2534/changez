@@ -1,4 +1,4 @@
-export { actionIcon } from "./components/Icons";
+export { ActionIcon } from "./components/Icons";
 
 export function relativeTime(dateStr: string, t?: (key: string, vars?: any) => string): string {
   try {

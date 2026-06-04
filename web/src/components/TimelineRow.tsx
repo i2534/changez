@@ -1,5 +1,5 @@
 import type { RowComponentProps } from "react-window";
-import { relativeTime, sourceColor, actionIcon } from "../utils";
+import { relativeTime, sourceColor, ActionIcon } from "../utils";
 import { useTimelineContext } from "./TimelineContext";
 import CodeView from "./CodeView";
 import "prismjs/components/prism-json.min.js";
@@ -55,7 +55,7 @@ export function TimelineRow({
           }}
           className={`z-10 flex h-5 w-5 cursor-pointer items-center justify-center rounded-full text-xs ${isSelected ? "bg-blue-500 ring-2 ring-blue-300" : `${sourceColor(entry.source)} ring-2 ring-gray-800`} text-white`}
         >
-          {actionIcon(entry.action)}
+          <ActionIcon action={entry.action} />
         </div>
         {index < filtered.length - 1 && (
           <div className="h-full w-px bg-gray-700" />
@@ -81,7 +81,7 @@ export function TimelineRow({
                 {entry.source}
               </span>
               <span className="text-xs text-gray-400">
-                {actionIcon(entry.action)} {entry.action}
+                <ActionIcon action={entry.action} /> {entry.action}
               </span>
               <span className="text-xs text-gray-500">
                 {relativeTime(entry.timestamp, t)}

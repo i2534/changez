@@ -174,7 +174,10 @@ export function CloseIcon({ size = 16, className, ...props }: IconProps) {
   );
 }
 
-export function actionIcon(action: string): JSX.Element {
-  if (action === "delete") return <ActionSquare size={10} />;
-  return <ActionDot size={10} />;
+export function ActionIcon({ action, className = "" }: { action: string; className?: string }) {
+  return (
+    <span className={`inline-block align-text-bottom ${className}`}>
+      {action === "delete" ? <ActionSquare size={10} /> : <ActionDot size={10} />}
+    </span>
+  );
 }

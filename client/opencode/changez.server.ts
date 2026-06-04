@@ -1,8 +1,9 @@
 // OpenCode Plugin: changez.server — 自动文件变更追踪 (Server 插件)
 //
 // 自包含单文件插件，仅依赖 Node.js 内置模块。
-// 在 tool.execute.after 中拦截文件修改工具（write/edit/multiedit/apply_patch/bash rm），
+// 主 session：在 tool.execute.after 中拦截文件修改工具（write/edit/multiedit/apply_patch/bash rm），
 // 异步上报文件内容到 changez 服务。
+// 子 session：通过 event 钩子监听 session.diff 事件，追踪子 agent 的文件编辑。
 //
 // 配对文件：changez.tui.tsx（可选 TUI 状态展示插件）
 //
@@ -61,6 +62,12 @@ type PluginInput = {
 const LOG_LEVELS = { error: 0, warn: 1, info: 2, debug: 3 } as const;
 
 const sessionModels = new Map<string, string>();
+
+const sessionContext = new Map<string, {
+    parentID?: string;
+    directory?: string;
+    model?: string;
+}>();
 
 function createLogger(
   client: PluginInput["client"],
@@ -315,10 +322,117 @@ const createServerPlugin = async (
       _output: unknown,
     ): Promise<void> => {
       if (input.model) {
-        sessionModels.set(
-          input.sessionID,
-          `${input.model.providerID}/${input.model.modelID}`,
-        );
+        const modelKey = `${input.model.providerID}/${input.model.modelID}`;
+        sessionModels.set(input.sessionID, modelKey);
+        const ctx = sessionContext.get(input.sessionID);
+        if (ctx) ctx.model = modelKey;
+      }
+    },
+
+    "event": async (input: { event: { type: string; properties: Record<string, unknown> } }): Promise<void> => {
+      const { event } = input;
+
+      if (event.type === "session.created") {
+        const info = event.properties.info as { id?: string; parentID?: string; directory?: string } | undefined;
+        if (info?.id) {
+          sessionContext.set(info.id, {
+            parentID: info.parentID,
+            directory: info.directory,
+          });
+          log("debug", `session.created: ${info.id}${info.parentID ? ` (child of ${info.parentID})` : " (main)"}`, {
+            sessionID: info.id,
+            parentID: info.parentID,
+            directory: info.directory,
+          });
+        }
+      }
+
+      if (event.type === "session.diff") {
+        const sessionID = (event.properties.sessionID as string) ?? "";
+        const diff = (event.properties.diff as Array<{ file: string; before: string; after: string }> | undefined) ?? [];
+        const ctx = sessionContext.get(sessionID);
+
+        if (!ctx) {
+          log("warn", `session.diff: no context for session ${sessionID} — session.created may have been missed`, {
+            sessionID,
+            diffLength: diff.length,
+          });
+          return;
+        }
+        if (!ctx.parentID) {
+          log("debug", `session.diff: skipping main session ${sessionID} (no parentID)`, {
+            sessionID,
+          });
+          return;
+        }
+
+        // 按 file 去重：保留每个文件的最后一次编辑
+        const seen = new Map<string, { file: string; before: string; after: string }>();
+        for (const fileDiff of diff) {
+          seen.set(fileDiff.file, fileDiff);
+        }
+
+        log("info", `session.diff: ${seen.size} file(s) from child session ${sessionID}`, {
+          sessionID,
+          parentID: ctx.parentID,
+        });
+
+        const files: Array<{ path: string; content: string; action: string }> = [];
+
+        for (const fileDiff of seen.values()) {
+          if (!fileDiff.after) continue;
+
+          try {
+            const absPath = path.isAbsolute(fileDiff.file)
+              ? path.normalize(fileDiff.file)
+              : path.normalize(path.join(ctx.directory ?? detectedRoot, fileDiff.file));
+
+            const stat = fs.statSync(absPath);
+            if (stat.size > unifiedConfig.max_file_size) {
+              log("debug", `skip large file (>${unifiedConfig.max_file_size} bytes): ${absPath}`);
+              continue;
+            }
+            const content = fs.readFileSync(absPath, "utf8");
+            if (shouldSkipFile(absPath, excludes, content)) {
+              log("debug", `skip excluded file: ${absPath}`);
+              continue;
+            }
+            files.push({ path: absPath, content, action: fileDiff.before ? "update" : "create" });
+          } catch (e) {
+            log("debug", `session.diff read failed for ${fileDiff.file}: ${String(e)}`);
+          }
+        }
+
+        if (files.length === 0) return;
+
+        void (async () => {
+          try {
+            const res = await httpRequest(unifiedConfig, "POST", "/api/snapshot", {
+              source: unifiedConfig.source,
+              sessionId: sessionID,
+              model: ctx.model ?? "",
+              files,
+            });
+
+            log("info", `session.diff snapshot sent: ${files.length} file(s) — ${res.status}`, {
+              sessionID,
+              parentID: ctx.parentID,
+              httpStatus: res.status,
+            });
+
+            if (res.status >= 400) {
+              const body = res.json as { error?: { code?: string; message?: string } } | undefined;
+              const errorMsg = body?.error?.message ?? JSON.stringify(body);
+              if (res.status >= 500) {
+                log("warn", `session.diff snapshot server error: ${res.status} — ${errorMsg}`);
+              } else {
+                log("error", `session.diff snapshot client error: ${res.status} — ${errorMsg}`);
+              }
+            }
+          } catch (e) {
+            log("warn", `session.diff snapshot request failed: ${String(e)}`);
+          }
+        })();
       }
     },
 

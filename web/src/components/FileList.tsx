@@ -125,7 +125,7 @@ function TreeNodeView({
         style={{ paddingLeft: `${depth * 16 + 8}px` }}
       >
         <span className="truncate text-sm text-gray-200">
-          <span className="mr-2 inline-block text-gray-400">
+          <span className="mr-2 inline-block align-text-bottom text-gray-400">
             <FileIcon size={14} />
           </span>
           {node.name}
@@ -165,7 +165,7 @@ function TreeNodeView({
         >
           <ChevronRight size={12} />
         </span>
-        <span className="mr-2 inline-block text-gray-400">
+        <span className="mr-2 inline-block align-text-bottom text-gray-400">
           {isExpanded ? <FolderOpenIcon size={14} /> : <FolderIcon size={14} />}
         </span>
         <span className="text-sm text-gray-200">{node.name}</span>
