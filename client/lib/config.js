@@ -134,7 +134,8 @@ function mergeConfigs(...configs) {
   for (const config of configs) {
     if (config) {
       for (const key of Object.keys(config)) {
-        if (config[key] !== undefined) {
+        // 跳过 undefined 和空字符串，防止低优先级配置覆盖高优先级配置
+        if (config[key] !== undefined && config[key] !== "") {
           result[key] = config[key];
         }
       }
