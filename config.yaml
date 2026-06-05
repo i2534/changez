@@ -87,3 +87,67 @@ log:
   # 相对路径相对于配置文件所在目录
   # 默认：changez.log
   file: "changez.log"
+
+# ── AI 摘要配置 ────────────────────────────────────────────
+# 可选模块，默认关闭。启用后自动为文件变更生成 AI 摘要。
+# 支持 OpenAI 兼容 API（OpenAI、llama-server、Ollama 等）。
+
+ai:
+  # 是否启用 AI 模块
+  # 默认：false
+  enabled: false
+
+  # Provider 类型，目前仅支持 openai（OpenAI 兼容 API）
+  # 默认：openai
+  provider: "openai"
+
+  # API 基础 URL
+  # 支持 ${VAR} 环境变量展开
+  # 示例：http://127.0.0.1:8080/v1（llama-server）
+  # 示例：https://api.openai.com/v1
+  base_url: ""
+
+  # API 密钥
+  # 支持 ${VAR} 环境变量展开，本地服务可留空
+  api_key: ""
+
+  # 模型名称
+  # 默认：gpt-4o-mini
+  model: "gpt-4o-mini"
+
+  # 最大输出 token 数
+  # 默认：1024
+  max_tokens: 1024
+
+  # 采样温度（0-1）
+  # 默认：0.3
+  temperature: 0.3
+
+  # LLM 调用超时
+  # 默认：30s
+  timeout: "30s"
+
+  # Prompt 模板
+  # 使用 Go text/template 语法，可用变量：
+  # {{.FilePath}} 文件路径
+  # {{.Action}}   操作类型（创建/修改/删除）
+  # {{.Source}}   来源（opencode/claudecode/cursor/human）
+  # {{.Message}}  提交消息
+  # {{.Diff}}     变更内容（unified diff 格式）
+  # 留空使用默认中文模板
+  prompt: ""
+
+  # 触发器配置
+  triggers:
+    # 新快照自动触发摘要生成
+    # 默认：true
+    on_snapshot: true
+
+    # 批量处理大小
+    # 默认：5
+    batch_size: 5
+
+    # 失败最大重试次数
+    # 达到此次数后标记为 failed
+    # 默认：3
+    max_retries: 3

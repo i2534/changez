@@ -58,10 +58,50 @@ compact:
 cleanup:
   enabled: true
   interval: "168h"       # 一周清理一次
+ai:
+  enabled: true
+  provider: openai
+  base_url: "http://127.0.0.1:8080/v1"   # 本地 llama-server
+  api_key: "${LLAMA_API_KEY}"            # 支持 ${VAR} 环境变量
+  model: "qwen2.5-coder-32b"
+  timeout: "60s"
+  prompt: |                          # Prompt 模板，支持 {{.FilePath}}, {{.Action}}, {{.Source}}, {{.Message}}, {{.Diff}}
+    你是一个代码变更分析助手。请分析以下文件变更并生成简洁的中文摘要。
+    文件: {{.FilePath}}
+    操作: {{.Action}}
+    来源: {{.Source}}
+    {{.Message}}
+    请简要说明这次变更做了什么，用1-2句话概括。只输出摘要内容，不要加任何前缀或解释。
+    变更内容:
+    {{.Diff}}
+  triggers:
+    on_snapshot: true
+    batch_size: 5
+    max_retries: 3
 log:
   level: "info"
   file: "changez.log"
 ```
+
+### AI 摘要（可选）
+
+Changez 内置可选的 AI 变更摘要模块，默认关闭。启用后自动为每次文件变更生成简洁的中文摘要。
+
+**支持的 Provider**：OpenAI 兼容 API（OpenAI、llama-server、Ollama 等）。
+
+**工作原理**：
+1. 文件快照后自动插入 `pending` 状态记录
+2. 后台 Worker 轮询待处理记录，重建 diff 内容并调用 LLM
+3. 摘要落库后可通过 API、MCP 工具复用
+
+**Prompt 模板**：通过 `ai.prompt` 配置，使用 Go `text/template` 语法，可用变量：`{{.FilePath}}`、`{{.Action}}`、`{{.Source}}`、`{{.Message}}`、`{{.Diff}}`。留空使用默认中文模板。
+
+**API 端点**：
+- `GET /api/files/summary?path=&version=` — 查询指定版本的 AI 摘要
+- `POST /api/files/summary/refresh?path=&version=` — 手动刷新摘要
+
+**MCP 工具**：
+- `changez_summary` — 查询指定版本的 AI 摘要
 
 ## 客户端集成
 
@@ -187,6 +227,7 @@ Changez 提供以下 MCP 工具：
 | `changez_files` | 列出项目文件 |
 | `changez_activity` | 查询最近变更活动 |
 | `changez_stats` | 查询项目统计信息 |
+| `changez_summary` | 查询指定版本的 AI 摘要 |
 
 ## 技术架构
 

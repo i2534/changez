@@ -10,8 +10,9 @@ import { TimelineFilter } from "./TimelineFilter";
 import { TimelineRow } from "./TimelineRow";
 
 const ROW_BASE = 70;
+const ROW_SUMMARY = 80;
 const ROW_METADATA = 90;
-const ROW_EXPANDED = 130;
+const ROW_EXPANDED = 220;
 const ROW_CONTENT_LOADING = 130;
 const ROW_CONTENT_LOADED = 310;
 const DEFAULT_ROW_HEIGHT = 80;
@@ -26,7 +27,7 @@ interface TimelineListProps {
 }
 
 function TimelineList({ filtered, onListRef, onVersionClick, onRowClick, onDiff, fetchInlineContent, onCopyContent }: TimelineListProps) {
-  const { expandedId, contentVersionId, contentMap, loadingContent } = useTimelineContext();
+  const { expandedId, contentVersionId, contentMap, loadingContent, summaries } = useTimelineContext();
   const internalListRef = useRef<ListImperativeAPI | null>(null);
   const dynamicRowHeight = useDynamicRowHeight({ defaultRowHeight: DEFAULT_ROW_HEIGHT });
   useEffect(() => { onListRef(internalListRef.current); }, [internalListRef, onListRef]);
@@ -37,15 +38,16 @@ function TimelineList({ filtered, onListRef, onVersionClick, onRowClick, onDiff,
       const isMeta = expandedId === entry.versionId;
       const isContent = contentVersionId === entry.versionId;
       const hasMeta = entry.sessionId || entry.model || entry.message;
-      let height = hasMeta ? ROW_METADATA : ROW_BASE;
-      if (isMeta) height += ROW_EXPANDED - ROW_METADATA;
+      const hasSummary = summaries.has(entry.versionId);
+      let height = hasMeta ? ROW_METADATA : hasSummary ? ROW_SUMMARY : ROW_BASE;
+      if (isMeta) height += ROW_EXPANDED - (hasMeta ? ROW_METADATA : ROW_BASE);
       if (isContent) {
         if (loadingContent === entry.versionId) height += ROW_CONTENT_LOADING;
         else if (contentMap.has(entry.versionId)) height += ROW_CONTENT_LOADED;
       }
       dynamicRowHeight.setRowHeight(i, height);
     }
-  }, [filtered, expandedId, contentVersionId, contentMap, loadingContent, dynamicRowHeight]);
+  }, [filtered, expandedId, contentVersionId, contentMap, loadingContent, summaries, dynamicRowHeight]);
 
   const rowData = useMemo(() => ({ filtered, onVersionClick, onRowClick, onDiff, fetchInlineContent, onCopyContent }),
     [filtered, onVersionClick, onRowClick, onDiff, fetchInlineContent, onCopyContent]);
@@ -69,10 +71,12 @@ function TimelineList({ filtered, onListRef, onVersionClick, onRowClick, onDiff,
   );
 }
 
-export default function Timeline({ entries, selectedIds, filePath, onVersionClick, onDiff }: {
+export default function Timeline({ entries, selectedIds, filePath, project, summaries, onVersionClick, onDiff }: {
   entries: VersionEntry[];
   selectedIds: number[];
   filePath: string;
+  project: string;
+  summaries: Map<number, { summary: string; status: string; model: string }>;
   onVersionClick: (id: number, shiftKey: boolean) => void;
   onDiff: (from: number, to: number) => void;
 }) {
@@ -134,8 +138,8 @@ export default function Timeline({ entries, selectedIds, filePath, onVersionClic
   }, []);
   const ctxValue = useMemo(() => ({
     expandedId, setExpandedId, contentVersionId, setContentVersionId,
-    contentMap, loadingContent, selectedIds, filePath, t,
-  }), [expandedId, contentVersionId, contentMap, loadingContent, selectedIds, filePath, t]);
+    contentMap, loadingContent, selectedIds, filePath, project, t, summaries,
+  }), [expandedId, contentVersionId, contentMap, loadingContent, selectedIds, filePath, project, t, summaries]);
 
   return (
     <TimelineProvider value={ctxValue}>

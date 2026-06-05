@@ -68,7 +68,9 @@
     "collapse_content": "收起内容",
     "failed_to_load": "加载版本失败",
     "failed_to_load_content": "加载内容失败",
-    "corrupted_restore": "无法恢复 v{{version}}：该版本数据已损坏（delta 链不完整）"
+    "corrupted_restore": "无法恢复 v{{version}}：该版本数据已损坏（delta 链不完整）",
+    "ai_summary": "AI 摘要",
+    "ai_summary_generating": "生成中..."
   },
   "diff": {
     "back": "← 返回",
@@ -107,9 +109,48 @@
     "message": "发生了意外错误",
     "reload": "重新加载"
   },
+  "session": {
+    "title": "会话分析",
+    "back_to_timeline": "← 返回时间线",
+    "no_changes": "此会话暂无变更记录。",
+    "ai_session_summary": "AI 会话分析",
+    "generating": "AI 分析生成中...",
+    "changes_count": "变更次数",
+    "files_count": "涉及文件",
+    "source": "来源",
+    "model": "模型",
+    "duration": "持续时间",
+    "file_changes": "文件变更",
+    "copy": "复制",
+    "copied": "已复制",
+    "failed_to_load": "加载会话数据失败"
+  },
   "notFound": {
     "title": "404 - 页面未找到",
     "message": "你要查找的页面不存在。",
     "goHome": "返回首页"
+  },
+  "trends": {
+    "title": "趋势分析",
+    "back": "← 返回",
+    "date_range": "时间范围",
+    "from": "从",
+    "to": "到",
+    "last_7_days": "最近 7 天",
+    "last_30_days": "最近 30 天",
+    "custom": "自定义",
+    "query": "查询",
+    "total_changes": "总变更次数",
+    "files_affected": "涉及文件",
+    "period": "统计周期",
+    "ai_trends_insights": "✦ AI 趋势洞察",
+    "generating": "AI 分析生成中...",
+    "source_distribution": "来源分布",
+    "top_files": "热门变更文件",
+    "copy": "复制",
+    "copied": "已复制到剪贴板",
+    "failed_to_load": "加载趋势数据失败",
+    "no_data": "暂无数据",
+    "today_only": "默认为今天"
   }
 }

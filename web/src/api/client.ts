@@ -64,3 +64,38 @@ export async function apiJSON<T>(path: string, options?: RequestInit): Promise<T
 export function encodeFilePath(path: string): string {
   return encodeURIComponent(encodeURIComponent(path));
 }
+
+export function getAISummaries(params: { project?: string; path?: string; since?: string; until?: string; limit?: number; offset?: number }) {
+  const q = new URLSearchParams();
+  if (params.project) q.set("project", params.project);
+  if (params.path) q.set("path", params.path);
+  if (params.since) q.set("since", params.since);
+  if (params.until) q.set("until", params.until);
+  if (params.limit) q.set("limit", String(params.limit));
+  if (params.offset) q.set("offset", String(params.offset));
+  return apiJSON<import("./types").SummaryResponse>(`/api/files/summary?${q}`);
+}
+
+export function refreshAISummary(params: { project?: string; path?: string; version?: number }) {
+  const q = new URLSearchParams();
+  if (params.project) q.set("project", params.project);
+  if (params.path) q.set("path", params.path);
+  if (params.version) q.set("version", String(params.version));
+  return apiJSON<Record<string, unknown>>(`/api/files/summary/refresh?${q}`, { method: "POST" });
+}
+
+export function getAISession(params: { project?: string; sessionId: string }) {
+  const q = new URLSearchParams();
+  q.set("sessionId", params.sessionId);
+  if (params.project) q.set("project", params.project);
+  return apiJSON<import("./types").SessionResponse>(`/api/files/session?${q}`);
+}
+
+export function getAITrends(params: { project?: string; since?: string; until?: string; topFiles?: number }) {
+  const q = new URLSearchParams();
+  if (params.project) q.set("project", params.project);
+  if (params.since) q.set("since", params.since);
+  if (params.until) q.set("until", params.until);
+  if (params.topFiles) q.set("topFiles", String(params.topFiles));
+  return apiJSON<import("./types").TrendsResponse>(`/api/files/trends?${q}`);
+}

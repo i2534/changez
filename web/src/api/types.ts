@@ -66,3 +66,52 @@ export interface ActivityItem {
 export interface ActivityResponse {
   activity: ActivityItem[];
 }
+
+// AI Summary types
+export interface SummaryEntry {
+  versionId: number;
+  action: string;
+  timestamp: string;
+  source: string;
+  summary?: string;
+  summaryStatus?: string;
+  aiModel?: string;
+}
+
+export interface SummaryResponse {
+  summaries: SummaryEntry[];
+}
+
+// AI Session types
+export interface SessionChangeEntry {
+  filePath: string;
+  projectName: string;
+  action: string;
+  message?: string;
+  timestamp: string;
+}
+
+export interface SessionResponse {
+  sessionId: string;
+  status: string;
+  summary?: string;
+  model?: string;
+  changes: SessionChangeEntry[];
+}
+
+// AI Trends types
+export interface FileChangeCount {
+  filePath: string;
+  count: number;
+}
+
+export interface TrendsResponse {
+  period: string;
+  totalFiles: number;
+  totalChanges: number;
+  sourceBreakdown: Record<string, number>;
+  topFiles: FileChangeCount[];
+  status?: string;
+  summary?: string;
+  model?: string;
+}

@@ -39,6 +39,12 @@ func Open(dataDir string) (*DB, error) {
 		return nil, fmt.Errorf("enable foreign keys: %w", err)
 	}
 
+	// 启用 WAL 模式以支持并发读写
+	if _, err := db.Exec("PRAGMA journal_mode = WAL"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("enable WAL mode: %w", err)
+	}
+
 	d := &DB{db: db}
 
 	// 创建表

@@ -31,16 +31,19 @@ export function TimelineRow({
     contentVersionId,
     setContentVersionId,
     filePath,
+    project,
     selectedIds,
     contentMap,
     loadingContent,
     t,
+    summaries,
   } = useTimelineContext();
 
   const entry = filtered[index];
   const isSelected = selectedIds.includes(entry.versionId);
   const isExpanded = expandedId === entry.versionId;
   const hasMeta = entry.sessionId || entry.model || entry.message;
+  const aiSummary = summaries.get(entry.versionId) ?? null;
   const showDiffBtn = selectedIds.length === 2 && isSelected;
   const inlineContent = contentMap.get(entry.versionId) ?? null;
   const isLoading = loadingContent === entry.versionId;
@@ -120,7 +123,7 @@ export function TimelineRow({
             </div>
           </div>
 
-          {hasMeta && (
+          {(hasMeta || aiSummary) && (
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -133,23 +136,49 @@ export function TimelineRow({
           )}
 
           {isExpanded && (
-            <div className="mt-2 rounded bg-gray-900 p-2 text-xs text-gray-400">
-              {entry.sessionId && (
-                <div>
-                  <span className="text-gray-500">{t("timeline.session")}:</span>{" "}
-                  {entry.sessionId}
+            <div className="mt-2 space-y-2">
+              {hasMeta && (
+                <div className="rounded bg-gray-900 p-2 text-xs text-gray-400">
+                  {entry.sessionId && (
+                    <div>
+                      <span className="text-gray-500">{t("timeline.session")}:</span>{" "}
+                      <a href={`/projects/${project}/session/${entry.sessionId}`} className="text-blue-400 hover:underline">{entry.sessionId}</a>
+                    </div>
+                  )}
+                  {entry.model && (
+                    <div>
+                      <span className="text-gray-500">{t("timeline.model")}:</span>{" "}
+                      {entry.model}
+                    </div>
+                  )}
+                  {entry.message && (
+                    <div>
+                      <span className="text-gray-500">{t("timeline.message")}:</span>{" "}
+                      {entry.message}
+                    </div>
+                  )}
                 </div>
               )}
-              {entry.model && (
-                <div>
-                  <span className="text-gray-500">{t("timeline.model")}:</span>{" "}
-                  {entry.model}
-                </div>
-              )}
-              {entry.message && (
-                <div>
-                  <span className="text-gray-500">{t("timeline.message")}:</span>{" "}
-                  {entry.message}
+              {aiSummary && (
+                <div className="rounded border border-purple-900/30 bg-purple-900/10 p-2">
+                  <div className="flex items-start gap-2">
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="mt-0.5 flex-shrink-0 text-purple-400">
+                      <path d="M8 1l1.5 4.5L14 7l-4.5 1.5L8 13l-1.5-4.5L2 7l4.5-1.5L8 1z" fill="currentColor"/>
+                    </svg>
+                    <div className="min-w-0">
+                      <div className="mb-1 flex items-center justify-between">
+                        <span className="text-[10px] font-medium text-purple-400">{t("timeline.ai_summary")}</span>
+                        <button onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(aiSummary.summary); }} className="text-[10px] text-gray-500 hover:text-gray-400">{t("timeline.copy_clipboard", { version: entry.versionId })}</button>
+                      </div>
+                      <p className="text-xs leading-relaxed text-gray-300">{aiSummary.summary}</p>
+                      {aiSummary.status === 'pending' && (
+                        <div className="mt-1 flex items-center gap-1 text-xs text-gray-500">
+                          <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                          {t("timeline.ai_summary_generating")}
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
               )}
             </div>

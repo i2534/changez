@@ -8,6 +8,7 @@ import (
 	"os"
 	"sync"
 
+	"github.com/changez/changez/internal/ai"
 	"github.com/changez/changez/internal/compact"
 	"github.com/changez/changez/internal/config"
 	"github.com/changez/changez/internal/db"
@@ -27,6 +28,7 @@ type Handler struct {
 	DeltaStore *storage.DeltaStore
 	Config     *config.Config
 	Compact    *compact.Compactor
+	AIWorker   *ai.Worker
 	Logger     *slog.Logger
 	fileMuMap  *sync.Map
 	// 每个 projectRoot → 最新一次的 snapshot 结果（TUI 轮询用）

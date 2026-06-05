@@ -1,23 +1,26 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { apiJSON } from "../api/client";
-import { VersionResponse } from "../api/types";
+import { apiJSON, getAISummaries } from "../api/client";
+import { VersionResponse, SummaryResponse } from "../api/types";
 import Timeline from "../components/Timeline";
 import Skeleton from "../components/Skeleton";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 
 export default function FileTimeline() {
-  const { project, path } = useParams<{ project: string; path: string }>();
+  const params = useParams();
+  const project = params.project;
+  const pathSegments = params["*"];
   const navigate = useNavigate();
   const [response, setResponse] = useState<VersionResponse | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [lastClickedId, setLastClickedId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
+  const [summaries, setSummaries] = useState(new Map<number, { summary: string; status: string; model: string }>());
   const { t } = useTranslation();
 
   const projectName = decodeURIComponent(project || "");
-  const filePath = decodeURIComponent(path || "");
+  const filePath = decodeURIComponent(pathSegments || "");
 
   useEffect(() => {
     if (!projectName || !filePath) return;
@@ -25,6 +28,7 @@ export default function FileTimeline() {
     setSelectedIds([]);
     setLastClickedId(null);
     setLoading(true);
+    setSummaries(new Map());
     apiJSON<VersionResponse>(
       `/api/files/versions?path=${encodeURIComponent(filePath)}`, { signal: abort.signal }
     )
@@ -34,6 +38,22 @@ export default function FileTimeline() {
         toast.error(err instanceof Error ? err.message : t("timeline.failed_to_load"));
       })
       .finally(() => setLoading(false));
+
+    getAISummaries({ path: filePath })
+      .then((res: SummaryResponse) => {
+        if (abort.signal.aborted) return;
+        const m = new Map<number, { summary: string; status: string; model: string }>();
+        for (const s of res.summaries) {
+          m.set(s.versionId, {
+            summary: s.summary ?? "",
+            status: s.summaryStatus ?? "",
+            model: s.aiModel ?? "",
+          });
+        }
+        setSummaries(m);
+      })
+      .catch(() => {});
+
     return () => abort.abort();
   }, [projectName, filePath]);
 
@@ -97,6 +117,8 @@ export default function FileTimeline() {
         entries={response.versions}
         selectedIds={selectedIds}
         filePath={filePath}
+        project={projectName}
+        summaries={summaries}
         onVersionClick={handleVersionClick}
         onDiff={handleDiff}
       />

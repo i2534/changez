@@ -34,5 +34,14 @@ func NewMCPHandler(h *handler.Handler) http.Handler {
 	tool, handlerFunc = NewStatsTool(h)
 	s.AddTool(tool, handlerFunc)
 
+	tool, handlerFunc = NewSummaryTool(h)
+	s.AddTool(tool, handlerFunc)
+
+	tool, handlerFunc = NewSessionTool(h)
+	s.AddTool(tool, handlerFunc)
+
+	tool, handlerFunc = NewTrendsTool(h)
+	s.AddTool(tool, handlerFunc)
+
 	return server.NewStreamableHTTPServer(s)
 }

@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/changez/changez/internal/ai"
 	"github.com/changez/changez/internal/compact"
 	"github.com/changez/changez/internal/config"
 	"github.com/changez/changez/internal/db"
@@ -29,9 +30,11 @@ func New(
 	compactor *compact.Compactor,
 	logger *slog.Logger,
 	webFS *embed.FS,
+	aiWorker *ai.Worker,
 ) (http.Handler, *handler.Handler) {
 	h := handler.NewHandler(database, blobStore, deltaStore, cfg, logger, fileMuMap)
 	h.Compact = compactor
+	h.AIWorker = aiWorker
 
 	mux := http.NewServeMux()
 
@@ -122,6 +125,37 @@ func New(
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"sources": sources})
+	})
+
+	apiMux.HandleFunc("/api/files/summary", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			h.HandleSummary(w, r)
+		default:
+			writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "仅支持 GET")
+		}
+	})
+	apiMux.HandleFunc("/api/files/summary/refresh", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			h.HandleSummaryRefresh(w, r)
+		default:
+			writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "仅支持 POST")
+		}
+	})
+	apiMux.HandleFunc("/api/files/session", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			h.HandleSession(w, r)
+		} else {
+			writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "仅支持 GET")
+		}
+	})
+	apiMux.HandleFunc("/api/files/trends", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			h.HandleTrends(w, r)
+		} else {
+			writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "仅支持 GET")
+		}
 	})
 
 	mux.Handle("/api/", authMiddleware(loggingMiddleware(apiMux, h.Logger), token))

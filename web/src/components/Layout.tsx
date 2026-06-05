@@ -93,7 +93,7 @@ function getBreadcrumbs(pathname: string, t: (key: string) => string, search?: s
       crumbs.push({ path: accumulated + "/files", label: part });
     } else if (parts[i] === "files" && i > 1) {
       crumbs.push({ path: accumulated, label: t("layout.files") });
-    } else if (i === parts.length - 1 && parts[i] !== "diff") {
+    } else if (i === parts.length - 1 && parts[i] !== "diff" && parts[i] !== "session" && parts[i] !== "trends") {
       const segments = part.split("/");
       let filePathAccumulated = "";
       for (let j = 0; j < segments.length; j++) {
@@ -106,6 +106,12 @@ function getBreadcrumbs(pathname: string, t: (key: string) => string, search?: s
       }
     } else if (parts[i] === "diff") {
       crumbs.push({ path: accumulated, label: t("layout.diff") });
+    } else if (parts[i] === "session") {
+      crumbs.push({ path: "", label: t("session.title") });
+    } else if (i > 0 && parts[i - 1] === "session") {
+      crumbs.push({ path: "", label: part.slice(0, 12) });
+    } else if (parts[i] === "trends") {
+      crumbs.push({ path: accumulated, label: t("trends.title") });
     }
   }
 

@@ -11,7 +11,9 @@ import { useTranslation } from "react-i18next";
 import { CloseIcon } from "../components/Icons";
 
 export default function DiffPage() {
-  const { project, path } = useParams<{ project: string; path: string }>();
+  const params = useParams();
+  const project = params.project;
+  const pathSegments = params["*"];
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const [diffData, setDiffData] = useState<DiffResponse | null>(null);
@@ -19,7 +21,7 @@ export default function DiffPage() {
   const { t } = useTranslation();
 
   const projectName = decodeURIComponent(project || "");
-  const filePath = decodeURIComponent(path || "");
+  const filePath = decodeURIComponent(pathSegments || "");
   const from = parseInt(searchParams.get("from") || "0", 10);
   const to = parseInt(searchParams.get("to") || "0", 10);
 

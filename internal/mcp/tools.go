@@ -176,3 +176,89 @@ func NewStatsTool(h *handler.Handler) (mcp.Tool, func(context.Context, mcp.CallT
 
 	return tool, handlerFunc
 }
+
+func NewSummaryTool(h *handler.Handler) (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
+	tool := mcp.NewTool("changez_summary",
+		mcp.WithDescription("Get AI-generated summaries of file changes."),
+		mcp.WithString("project", mcp.Description("Filter by project name")),
+		mcp.WithString("path", mcp.Description("Filter by file path")),
+		mcp.WithString("since", mcp.Description("Start time (ISO 8601)")),
+		mcp.WithString("until", mcp.Description("End time (ISO 8601)")),
+		mcp.WithNumber("limit", mcp.Description("Max results (default 20)")),
+		mcp.WithNumber("offset", mcp.Description("Result offset (default 0)")),
+	)
+
+	handlerFunc := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		result, err := h.ProcessSummary(ctx,
+			req.GetString("project", ""),
+			req.GetString("path", ""),
+			req.GetString("since", ""),
+			req.GetString("until", ""),
+			int(req.GetInt("limit", 20)),
+			int(req.GetInt("offset", 0)),
+		)
+		if err != nil {
+			return toolError(err.Error())
+		}
+		resultJSON, _ := json.Marshal(result)
+		return mcp.NewToolResultText(string(resultJSON)), nil
+	}
+
+	return tool, handlerFunc
+}
+
+func NewSessionTool(h *handler.Handler) (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
+	tool := mcp.NewTool("changez_session",
+		mcp.WithDescription("Get AI-generated session report for a coding session."),
+		mcp.WithString("project", mcp.Description("Filter by project name")),
+		mcp.WithString("sessionId", mcp.Required(), mcp.Description("Session ID to analyze")),
+	)
+
+	handlerFunc := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		sessionID, err := req.RequireString("sessionId")
+		if err != nil {
+			return toolError(err.Error())
+		}
+		result, err := h.ProcessSession(ctx,
+			req.GetString("project", ""),
+			sessionID,
+		)
+		if err != nil {
+			return toolError(err.Error())
+		}
+		resultJSON, _ := json.Marshal(result)
+		return mcp.NewToolResultText(string(resultJSON)), nil
+	}
+
+	return tool, handlerFunc
+}
+
+func NewTrendsTool(h *handler.Handler) (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
+	tool := mcp.NewTool("changez_trends",
+		mcp.WithDescription("Get AI-generated trend analysis for project changes."),
+		mcp.WithString("project", mcp.Required(), mcp.Description("Project name")),
+		mcp.WithString("since", mcp.Description("Start time (ISO 8601), defaults to 7 days ago")),
+		mcp.WithString("until", mcp.Description("End time (ISO 8601), defaults to now")),
+		mcp.WithNumber("topFiles", mcp.Description("Number of top files to include (default 10)")),
+	)
+
+	handlerFunc := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		project, err := req.RequireString("project")
+		if err != nil {
+			return toolError(err.Error())
+		}
+		result, err := h.ProcessTrends(ctx,
+			project,
+			req.GetString("since", ""),
+			req.GetString("until", ""),
+			int(req.GetInt("topFiles", 10)),
+		)
+		if err != nil {
+			return toolError(err.Error())
+		}
+		resultJSON, _ := json.Marshal(result)
+		return mcp.NewToolResultText(string(resultJSON)), nil
+	}
+
+	return tool, handlerFunc
+}

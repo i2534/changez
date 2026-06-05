@@ -68,7 +68,9 @@
     "collapse_content": "Collapse content",
     "failed_to_load": "Failed to load versions",
     "failed_to_load_content": "Failed to load content",
-    "corrupted_restore": "Cannot restore v{{version}}: version data is corrupted (incomplete delta chain)"
+    "corrupted_restore": "Cannot restore v{{version}}: version data is corrupted (incomplete delta chain)",
+    "ai_summary": "AI Summary",
+    "ai_summary_generating": "Generating..."
   },
   "diff": {
     "back": "← Back",
@@ -107,9 +109,48 @@
     "message": "An unexpected error occurred",
     "reload": "Reload"
   },
+  "session": {
+    "title": "Session Analysis",
+    "back_to_timeline": "← Back to Timeline",
+    "no_changes": "No changes in this session.",
+    "ai_session_summary": "AI Session Summary",
+    "generating": "AI analysis generating...",
+    "changes_count": "Changes",
+    "files_count": "Files",
+    "source": "Source",
+    "model": "Model",
+    "duration": "Duration",
+    "file_changes": "File Changes",
+    "copy": "Copy",
+    "copied": "Copied",
+    "failed_to_load": "Failed to load session data"
+  },
   "notFound": {
     "title": "404 - Page Not Found",
     "message": "The page you're looking for doesn't exist.",
     "goHome": "Go Home"
+  },
+  "trends": {
+    "title": "Trends Analysis",
+    "back": "← Back",
+    "date_range": "Date Range",
+    "from": "From",
+    "to": "To",
+    "last_7_days": "Last 7 days",
+    "last_30_days": "Last 30 days",
+    "custom": "Custom",
+    "query": "Query",
+    "total_changes": "Total Changes",
+    "files_affected": "Files Affected",
+    "period": "Period",
+    "ai_trends_insights": "✦ AI Trends Insights",
+    "generating": "Generating AI analysis...",
+    "source_distribution": "Source Distribution",
+    "top_files": "Top Changed Files",
+    "copy": "Copy",
+    "copied": "Copied to clipboard",
+    "failed_to_load": "Failed to load trends data",
+    "no_data": "No data available",
+    "today_only": "Defaults to today"
   }
 }

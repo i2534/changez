@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/changez/changez/internal/ai"
 	"github.com/changez/changez/internal/compact"
 	"github.com/changez/changez/internal/cleanup"
 	"github.com/changez/changez/internal/config"
@@ -81,7 +82,30 @@ func main() {
 	logger := loggerWrapper.Logger
 	compactor := compact.New(database, blobStore, deltaStore, &cfg.Compact, logger, fileMuMap)
 	cleaner := cleanup.New(database, blobStore, deltaStore, &cfg.Cleanup, logger, fileMuMap)
-	httpRouter, apiHandler := router.New(database, blobStore, deltaStore, &cfg, cfg.Token, fileMuMap, compactor, logger, webFS)
+
+	var aiWorker *ai.Worker
+	if cfg.AI.Enabled {
+		slog.Info("initializing AI module",
+			"provider", cfg.AI.Provider,
+			"model", cfg.AI.Model,
+			"base_url", cfg.AI.BaseURL,
+		)
+
+		aiTimeout, err := time.ParseDuration(cfg.AI.Timeout)
+		if err != nil {
+			slog.Warn("invalid AI timeout, using default", "error", err)
+			aiTimeout = 30 * time.Second
+		}
+
+		provider, err := ai.NewOpenAILike(cfg.AI.BaseURL, cfg.AI.APIKey, cfg.AI.Model, cfg.AI.Prompt, cfg.AI.SessionPrompt, cfg.AI.TrendsPrompt, cfg.AI.MaxTokens, cfg.AI.Temperature, aiTimeout)
+		if err != nil {
+			slog.Error("failed to create AI provider", "error", err)
+			os.Exit(1)
+		}
+		aiWorker = ai.NewWorker(provider, database, blobStore, deltaStore, &cfg.AI, logger)
+	}
+
+	httpRouter, apiHandler := router.New(database, blobStore, deltaStore, &cfg, cfg.Token, fileMuMap, compactor, logger, webFS, aiWorker)
 
 	srv := &http.Server{
 		Addr:         cfg.Listen,
@@ -98,6 +122,9 @@ func main() {
 
 	go compactor.Run(ctx)
 	go cleaner.Run(ctx)
+	if aiWorker != nil {
+		go aiWorker.Run(ctx)
+	}
 
 	errChan := make(chan error, 1)
 	go func() {

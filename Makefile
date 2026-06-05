@@ -3,6 +3,7 @@ BINARY  := $(DIST)/changez
 CMD     := ./cmd/changez
 PIDFILE := .changez.pid
 CONFIG  := config.yaml
+# .local 覆盖：config.Load 自动加载 config.yaml.local 作为本地覆盖（不被 git 追踪）
 
 .PHONY: build start stop check restart clean build-web test vet fmt
 

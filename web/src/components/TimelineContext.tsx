@@ -9,7 +9,9 @@ interface TimelineContextValue {
   loadingContent: number | null;
   selectedIds: number[];
   filePath: string;
+  project: string;
   t: (key: string, params?: Record<string, unknown>) => string;
+  summaries: Map<number, { summary: string; status: string; model: string }>;
 }
 
 export const TimelineContext = createContext<TimelineContextValue | null>(null);

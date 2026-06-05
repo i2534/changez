@@ -21,6 +21,8 @@ data/
 
 # Environment
 .env
+# Local config overrides
+*.local
 
 # OS
 .DS_Store

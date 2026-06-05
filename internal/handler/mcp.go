@@ -158,6 +158,7 @@ func (h *Handler) snapshotSingleFile(ctx context.Context, filePath, action, cont
 			return SnapshotResult{Path: filePath, Status: "error", Reason: fmt.Sprintf("提交事务失败: %v", txErr)}
 		}
 
+		h.triggerAISummary(ctx, versionID)
 		return SnapshotResult{Path: filePath, Status: "captured", VersionID: &versionID}
 	}
 
@@ -218,7 +219,24 @@ func (h *Handler) snapshotSingleFile(ctx context.Context, filePath, action, cont
 
 	h.tryCompact(fileID)
 
+	h.triggerAISummary(ctx, versionID)
 	return SnapshotResult{Path: filePath, Status: "captured", VersionID: &versionID}
+}
+
+// triggerAISummary 在快照成功后向 ai_summaries 表插入 pending 记录（fire-and-forget）。
+func (h *Handler) triggerAISummary(ctx context.Context, versionID int64) {
+	if h.AIWorker == nil {
+		return
+	}
+	if !h.Config.AI.Triggers.OnSnapshot {
+		return
+	}
+	_, err := h.DB.Handle().ExecContext(ctx, `
+		INSERT OR IGNORE INTO ai_summaries (version_id, status) VALUES (?, 'pending')
+	`, versionID)
+	if err != nil {
+		h.Logger.Warn("trigger AI summary insert failed", "version_id", versionID, "error", err)
+	}
 }
 
 // ProcessLog 查询版本历史（调用共享核心方法 doLog）。
@@ -369,4 +387,321 @@ func (h *Handler) ProcessStats(ctx context.Context, project string) (map[string]
 		return h.ProcessStatsByProject(ctx, project)
 	}
 	return h.DB.GetStats(ctx)
+}
+
+// ProcessSummary 查询 AI 摘要（共享核心逻辑，被 HandleSummary 和 MCP 调用）。
+func (h *Handler) ProcessSummary(ctx context.Context, project, path, since, until string, limit, offset int) (map[string]any, error) {
+	if h.AIWorker == nil {
+		return nil, fmt.Errorf("AI 模块未启用")
+	}
+
+	query := `
+		SELECT v.id, v.action, v.changed_at, s.name as source,
+		       a.summary, a.status as summary_status, a.model as ai_model
+		FROM versions v
+		JOIN files f ON v.file_id = f.id
+		JOIN projects p ON f.project_id = p.id
+		JOIN sources s ON v.source_id = s.id
+		LEFT JOIN ai_summaries a ON v.id = a.version_id
+		WHERE p.is_deleted = 0 AND f.is_deleted = 0
+	`
+	args := []any{}
+
+	if project != "" {
+		query += " AND p.name = ?"
+		args = append(args, project)
+	}
+	if path != "" {
+		query += " AND f.path = ?"
+		args = append(args, path)
+	}
+	if since != "" {
+		query += " AND v.changed_at >= ?"
+		args = append(args, since)
+	}
+	if until != "" {
+		query += " AND v.changed_at <= ?"
+		args = append(args, until)
+	}
+
+	query += " ORDER BY v.changed_at DESC LIMIT ? OFFSET ?"
+	args = append(args, limit, offset)
+
+	rows, err := h.DB.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("查询失败: %w", err)
+	}
+	defer rows.Close()
+
+	type summaryEntry struct {
+		VersionID     int64  `json:"versionId"`
+		Action        string `json:"action"`
+		Timestamp     string `json:"timestamp"`
+		Source        string `json:"source"`
+		Summary       string `json:"summary,omitempty"`
+		SummaryStatus string `json:"summaryStatus,omitempty"`
+		AIModel       string `json:"aiModel,omitempty"`
+	}
+
+	var entries []summaryEntry
+	for rows.Next() {
+		var e summaryEntry
+		var summary, summaryStatus, aiModel *string
+		if err := rows.Scan(&e.VersionID, &e.Action, &e.Timestamp, &e.Source, &summary, &summaryStatus, &aiModel); err != nil {
+			return nil, fmt.Errorf("扫描失败: %w", err)
+		}
+		if summary != nil {
+			e.Summary = *summary
+		}
+		if summaryStatus != nil {
+			e.SummaryStatus = *summaryStatus
+		}
+		if aiModel != nil {
+			e.AIModel = *aiModel
+		}
+		entries = append(entries, e)
+	}
+
+	if entries == nil {
+		entries = []summaryEntry{}
+	}
+
+	return map[string]any{
+		"summaries": entries,
+	}, nil
+}
+
+// ProcessSession 查询会话级 AI 分析（共享核心逻辑，被 HandleSession 和 MCP 调用）。
+func (h *Handler) ProcessSession(ctx context.Context, project, sessionID string) (map[string]any, error) {
+	if h.AIWorker == nil {
+		return nil, fmt.Errorf("AI 模块未启用")
+	}
+
+	// Check cache first
+	var cachedSummary *string
+	var cachedStatus string
+	var cachedModel *string
+	query := `SELECT summary, status, model FROM ai_sessions WHERE session_id = ?`
+	args := []any{sessionID}
+	if project != "" {
+		query += " AND project_name = ?"
+		args = append(args, project)
+	}
+	row := h.DB.Handle().QueryRowContext(ctx, query, args...)
+	if err := row.Scan(&cachedSummary, &cachedStatus, &cachedModel); err == nil {
+		result := map[string]any{
+			"sessionId": sessionID,
+			"status":    cachedStatus,
+		}
+		if cachedSummary != nil {
+			result["summary"] = *cachedSummary
+		}
+		if cachedModel != nil {
+			result["model"] = *cachedModel
+		}
+		// Always return changes list
+		changes, err := h.getSessionChanges(ctx, project, sessionID)
+		if err != nil {
+			return nil, fmt.Errorf("查询变更列表失败: %w", err)
+		}
+		result["changes"] = changes
+		return result, nil
+	}
+
+	// No cache - trigger analysis
+	changes, err := h.getSessionChanges(ctx, project, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("查询变更列表失败: %w", err)
+	}
+
+	// Determine project name
+	projectName := project
+	if projectName == "" && len(changes) > 0 {
+		projectName = changes[0].ProjectName
+	}
+
+	// Insert pending record
+	_, err = h.DB.Handle().ExecContext(ctx, `
+		INSERT INTO ai_sessions (session_id, project_name, status) VALUES (?, ?, 'pending')
+		ON CONFLICT(session_id) DO UPDATE SET status = 'pending', updated_at = CURRENT_TIMESTAMP
+	`, sessionID, projectName)
+	if err != nil {
+		return nil, fmt.Errorf("插入待处理记录失败: %w", err)
+	}
+
+	result := map[string]any{
+		"sessionId": sessionID,
+		"status":    "pending",
+		"changes":   changes,
+	}
+	return result, nil
+}
+
+type SessionChangeEntry struct {
+	FilePath    string `json:"filePath"`
+	ProjectName string `json:"projectName"`
+	Action      string `json:"action"`
+	Message     string `json:"message,omitempty"`
+	Timestamp   string `json:"timestamp"`
+}
+
+type FileChangeCount struct {
+	FilePath string `json:"filePath"`
+	Count    int    `json:"count"`
+}
+
+func (h *Handler) getSessionChanges(ctx context.Context, project, sessionID string) ([]SessionChangeEntry, error) {
+	query := `
+		SELECT f.path, p.name, v.action, v.message, v.changed_at
+		FROM versions v
+		JOIN files f ON v.file_id = f.id
+		JOIN projects p ON f.project_id = p.id
+		WHERE v.session_id = ? AND p.is_deleted = 0 AND f.is_deleted = 0
+	`
+	args := []any{sessionID}
+	if project != "" {
+		query += " AND p.name = ?"
+		args = append(args, project)
+	}
+	query += " ORDER BY v.changed_at ASC"
+
+	rows, err := h.DB.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var changes []SessionChangeEntry
+	for rows.Next() {
+		var c SessionChangeEntry
+		if err := rows.Scan(&c.FilePath, &c.ProjectName, &c.Action, &c.Message, &c.Timestamp); err != nil {
+			return nil, err
+		}
+		changes = append(changes, c)
+	}
+	if changes == nil {
+		changes = []SessionChangeEntry{}
+	}
+	return changes, nil
+}
+
+// ProcessTrends 查询趋势分析（共享核心逻辑，被 HandleTrends 和 MCP 调用）。
+func (h *Handler) ProcessTrends(ctx context.Context, project, since, until string, topFilesLimit int) (map[string]any, error) {
+	if h.AIWorker == nil {
+		return nil, fmt.Errorf("AI 模块未启用")
+	}
+
+	// Get basic stats
+	var totalChanges int
+	var totalFiles int64
+	statsQuery := `
+		SELECT COUNT(*), COUNT(DISTINCT f.path)
+		FROM versions v
+		JOIN files f ON v.file_id = f.id
+		JOIN projects p ON f.project_id = p.id
+		WHERE p.is_deleted = 0 AND f.is_deleted = 0 AND v.changed_at >= ? AND v.changed_at <= ?
+	`
+	args := []any{since, until}
+	if project != "" {
+		statsQuery += " AND p.name = ?"
+		args = append(args, project)
+	}
+	if err := h.DB.Handle().QueryRowContext(ctx, statsQuery, args...).Scan(&totalChanges, &totalFiles); err != nil {
+		return nil, fmt.Errorf("查询统计失败: %w", err)
+	}
+
+	// Get source breakdown
+	sourceBreakdown := make(map[string]int)
+	srcQuery := `
+		SELECT s.name, COUNT(*)
+		FROM versions v
+		JOIN files f ON v.file_id = f.id
+		JOIN projects p ON f.project_id = p.id
+		JOIN sources s ON v.source_id = s.id
+		WHERE p.is_deleted = 0 AND f.is_deleted = 0 AND v.changed_at >= ? AND v.changed_at <= ?
+	`
+	srcArgs := []any{since, until}
+	if project != "" {
+		srcQuery += " AND p.name = ?"
+		srcArgs = append(srcArgs, project)
+	}
+	srcQuery += " GROUP BY s.name ORDER BY COUNT(*) DESC"
+	srcRows, err := h.DB.Query(ctx, srcQuery, srcArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("查询来源分布失败: %w", err)
+	}
+	defer srcRows.Close()
+	for srcRows.Next() {
+		var name string
+		var count int
+		if err := srcRows.Scan(&name, &count); err != nil {
+			continue
+		}
+		sourceBreakdown[name] = count
+	}
+
+	// Get top files
+	topFiles := make([]FileChangeCount, 0)
+	fileQuery := `
+		SELECT f.path, COUNT(*)
+		FROM versions v
+		JOIN files f ON v.file_id = f.id
+		JOIN projects p ON f.project_id = p.id
+		WHERE p.is_deleted = 0 AND f.is_deleted = 0 AND v.changed_at >= ? AND v.changed_at <= ?
+	`
+	fileArgs := []any{since, until}
+	if project != "" {
+		fileQuery += " AND p.name = ?"
+		fileArgs = append(fileArgs, project)
+	}
+	fileQuery += " GROUP BY f.path ORDER BY COUNT(*) DESC LIMIT ?"
+	fileArgs = append(fileArgs, topFilesLimit)
+	fileRows, err := h.DB.Query(ctx, fileQuery, fileArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("查询活跃文件失败: %w", err)
+	}
+	defer fileRows.Close()
+	for fileRows.Next() {
+		var fc FileChangeCount
+		if err := fileRows.Scan(&fc.FilePath, &fc.Count); err != nil {
+			continue
+		}
+		topFiles = append(topFiles, fc)
+	}
+
+	result := map[string]any{
+		"period":          fmt.Sprintf("%s ~ %s", since, until),
+		"totalFiles":      totalFiles,
+		"totalChanges":    totalChanges,
+		"sourceBreakdown": sourceBreakdown,
+		"topFiles":        topFiles,
+	}
+
+	// Check for cached trend summary
+	if project != "" {
+		var cachedSummary *string
+		var cachedStatus string
+		var cachedModel *string
+		row := h.DB.Handle().QueryRowContext(ctx, `
+			SELECT summary, status, model FROM ai_trends
+			WHERE project_name = ? AND period_start = date(?) AND period_end = date(?)
+		`, project, since, until)
+		if err := row.Scan(&cachedSummary, &cachedStatus, &cachedModel); err == nil {
+			result["status"] = cachedStatus
+			if cachedSummary != nil {
+				result["summary"] = *cachedSummary
+			}
+			if cachedModel != nil {
+				result["model"] = *cachedModel
+			}
+		} else {
+			// Insert pending
+			h.DB.Handle().ExecContext(ctx, `
+				INSERT INTO ai_trends (project_name, period_start, period_end, status) VALUES (?, date(?), date(?), 'pending')
+			`, project, since, until)
+			result["status"] = "pending"
+		}
+	}
+
+	return result, nil
 }
