@@ -10,6 +10,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
   const [loginOpen, setLoginOpen] = useState(false);
 
+  const currentProject = getCurrentProject(location.pathname);
+
   useEffect(() => {
     checkAuthRequired().then((required) => {
       if (required && !getToken()) setLoginOpen(true);
@@ -59,6 +61,17 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             </nav>
           </div>
           <div className="flex items-center gap-3">
+            {currentProject && (
+              <>
+                <button
+                  onClick={() => navigate(`/projects/${encodeURIComponent(currentProject)}/trends`)}
+                  className="text-sm text-gray-400 hover:text-gray-200"
+                >
+                  {t("trends.title")}
+                </button>
+                <span className="text-gray-600">|</span>
+              </>
+            )}
             <button
               onClick={toggleLang}
               className="text-sm text-gray-400 hover:text-gray-200"
@@ -72,6 +85,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       <LoginModal open={loginOpen} onClose={() => setLoginOpen(false)} />
     </div>
   );
+}
+
+function getCurrentProject(pathname: string): string | null {
+  const match = pathname.match(/^\/projects\/([^/]+)/);
+  return match ? decodeURIComponent(match[1]) : null;
 }
 
 function getBreadcrumbs(pathname: string, t: (key: string) => string, search?: string): { path: string; label: string }[] {

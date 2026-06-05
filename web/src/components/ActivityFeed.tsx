@@ -77,18 +77,18 @@ export default function ActivityFeed({
               className="flex w-full items-center gap-3 rounded px-2 py-1.5 text-left hover:bg-gray-700"
             >
               <span className={`flex h-2.5 w-2.5 flex-shrink-0 items-center justify-center rounded-sm ${sourceColor(group.source)}`} />
-              <span className="flex-shrink-0 text-xs text-gray-500">
+              <span className="w-16 flex-shrink-0 text-xs text-gray-500">
                 {relativeTime(group.latest, t)}
               </span>
               <span
-                className={`flex-shrink-0 rounded px-1.5 py-0.5 text-xs ${sourceColor(group.source)} text-white`}
+                className={`w-20 flex-shrink-0 rounded px-1.5 py-0.5 text-center text-xs ${sourceColor(group.source)} text-white`}
               >
                 {group.source}
               </span>
-              <span className="flex-shrink-0 text-xs text-gray-400" title={isMerged ? actionSummary.detail : undefined}>
+              <span className="w-24 flex-shrink-0 text-xs text-gray-400" title={isMerged ? actionSummary.detail : undefined}>
                 <ActionIcon action={group.firstAction} /> {isMerged ? actionSummary.short : group.firstAction}
               </span>
-              <span className="truncate text-sm text-gray-300">
+              <span className="min-w-0 flex-1 truncate text-sm text-gray-300">
                 {group.filePath}
               </span>
               {isMerged && (

@@ -3,9 +3,11 @@ import { useParams, useNavigate } from "react-router-dom";
 import { getAITrends } from "../api/client";
 import { TrendsResponse } from "../api/types";
 import Skeleton from "../components/Skeleton";
+import DateRangePicker from "../components/DateRangePicker";
 import { sourceColor } from "../utils";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
+import i18n from "../i18n";
 
 function getDate(days: number): string {
   const d = new Date();
@@ -139,28 +141,15 @@ export default function TrendsAnalysis() {
           {t("trends.custom")}
         </button>
         <div className="ml-auto flex items-center gap-2">
-          <label className="flex items-center gap-2 text-xs text-gray-400">
-            {t("trends.from")}:
-            <input
-              type="date"
-              value={since}
-              onChange={(e) => {
-                setSince(e.target.value);
-                setQuickRange("custom");
-              }}
-              className="rounded border border-gray-700 bg-gray-900 px-2 py-1 text-xs text-gray-300 focus:border-blue-500 focus:outline-none"
-            />
-          </label>
-          <span className="text-xs text-gray-500">{t("trends.to")}:</span>
-          <label className="flex items-center gap-2 text-xs text-gray-400 cursor-default">
-            <input
-              type="date"
-              value={until}
-              readOnly
-              className="rounded border border-gray-700 bg-gray-800/50 px-2 py-1 text-xs text-gray-500 cursor-default select-none"
-              title={t("trends.today_only")}
-            />
-          </label>
+          <DateRangePicker
+            since={since}
+            until={until}
+            onSinceChange={(date) => {
+              setSince(date);
+              setQuickRange("custom");
+            }}
+            locale={i18n.language}
+          />
           <button
             onClick={fetchData}
             disabled={loading}
@@ -281,7 +270,7 @@ export default function TrendsAnalysis() {
                           style={{ width: `${pct}%` }}
                         />
                       </div>
-                      <span className="w-16 text-sm text-gray-300">
+                      <span className="w-16 text-sm text-gray-300 whitespace-nowrap">
                         {count} ({pct}%)
                       </span>
                     </div>

@@ -46,6 +46,7 @@ func (w *Worker) Run(ctx context.Context) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
+	tick := 0
 	for {
 		select {
 		case <-ctx.Done():
@@ -55,8 +56,53 @@ func (w *Worker) Run(ctx context.Context) {
 			w.processPending(ctx)
 			w.processPendingSessions(ctx)
 			w.processPendingTrends(ctx)
+
+			tick++
+			if tick%60 == 0 {
+				w.logProgress(ctx)
+			}
 		}
 	}
+}
+
+func (w *Worker) logProgress(ctx context.Context) {
+	type counts struct {
+		pending, completed, failed int64
+	}
+	var summary, session, trend counts
+
+	row := w.db.Handle().QueryRowContext(ctx, `
+		SELECT COALESCE(SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END),0),
+		       COALESCE(SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END),0),
+		       COALESCE(SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END),0)
+		FROM ai_summaries`)
+	if err := row.Scan(&summary.pending, &summary.completed, &summary.failed); err != nil {
+		return
+	}
+
+	row = w.db.Handle().QueryRowContext(ctx, `
+		SELECT COALESCE(SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END),0),
+		       COALESCE(SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END),0),
+		       COALESCE(SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END),0)
+		FROM ai_sessions`)
+	if err := row.Scan(&session.pending, &session.completed, &session.failed); err != nil {
+		return
+	}
+
+	row = w.db.Handle().QueryRowContext(ctx, `
+		SELECT COALESCE(SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END),0),
+		       COALESCE(SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END),0),
+		       COALESCE(SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END),0)
+		FROM ai_trends`)
+	if err := row.Scan(&trend.pending, &trend.completed, &trend.failed); err != nil {
+		return
+	}
+
+	w.logger.Info("worker progress",
+		"summaries", fmt.Sprintf("pending:%d completed:%d failed:%d", summary.pending, summary.completed, summary.failed),
+		"sessions", fmt.Sprintf("pending:%d completed:%d failed:%d", session.pending, session.completed, session.failed),
+		"trends", fmt.Sprintf("pending:%d completed:%d failed:%d", trend.pending, trend.completed, trend.failed),
+	)
 }
 
 // processPending 查询 pending 记录，批量生成摘要。
@@ -105,7 +151,7 @@ func (w *Worker) processPending(ctx context.Context) {
 			continue
 		}
 
-		diff, err := w.getDiffForVersion(ctx, versionID, fileID)
+		diff, err := w.getDiffForVersion(ctx, versionID, fileID, 0)
 		if err != nil {
 			w.logger.Warn("get diff failed", "version_id", versionID, "error", err)
 			_ = w.markFailed(ctx, summaryID, err.Error())
@@ -158,8 +204,8 @@ func (w *Worker) processPending(ctx context.Context) {
 	}
 }
 
-// getDiffForVersion 获取版本的 diff 内容。
-func (w *Worker) getDiffForVersion(ctx context.Context, versionID int64, fileID int64) (string, error) {
+// getDiffForVersion 获取版本的 diff 内容，maxSize 控制截断大小（0=使用配置默认值）。
+func (w *Worker) getDiffForVersion(ctx context.Context, versionID int64, fileID int64, maxSize int) (string, error) {
 	ver, err := w.db.GetVersion(ctx, versionID)
 	if err != nil {
 		return "", fmt.Errorf("get version: %w", err)
@@ -180,7 +226,10 @@ func (w *Worker) getDiffForVersion(ctx context.Context, versionID int64, fileID 
 	}
 
 	// Truncate oversized diffs to avoid exceeding LLM context limits
-	maxDiffSize := w.cfg.Triggers.MaxDiffSize
+	maxDiffSize := maxSize
+	if maxDiffSize <= 0 {
+		maxDiffSize = w.cfg.Triggers.MaxDiffSize
+	}
 	if maxDiffSize <= 0 {
 		maxDiffSize = 64 * 1024 // 64KB default
 	}
@@ -193,11 +242,8 @@ func (w *Worker) getDiffForVersion(ctx context.Context, versionID int64, fileID 
 
 		baseAction := baseVer["action"].(string)
 		if baseAction == "delete" {
-newFileContent := fmt.Sprintf("[新文件创建]\n%s", string(currentContent))
-	if len(newFileContent) > maxDiffSize {
-		newFileContent = newFileContent[:maxDiffSize] + fmt.Sprintf("\n\n// ... truncated (%d total bytes)", len(newFileContent))
-	}
-	return newFileContent, nil
+			newFileContent := fmt.Sprintf("[新文件创建]\n%s", string(currentContent))
+			return truncateDiff(newFileContent, maxDiffSize), nil
 		}
 
 		baseContent, err := w.rebuildContent(ctx, baseVer)
@@ -206,13 +252,11 @@ newFileContent := fmt.Sprintf("[新文件创建]\n%s", string(currentContent))
 		}
 
 		diff := computeUnifiedDiff(string(baseContent), string(currentContent))
-		if len(diff) > maxDiffSize {
-			diff = diff[:maxDiffSize] + fmt.Sprintf("\n\n// ... truncated (%d total bytes)", len(diff))
-		}
-		return diff, nil
+		return truncateDiff(diff, maxDiffSize), nil
 	}
 
-	return fmt.Sprintf("[新文件创建]\n%s", string(currentContent)), nil
+	newFileContent := fmt.Sprintf("[新文件创建]\n%s", string(currentContent))
+	return truncateDiff(newFileContent, maxDiffSize), nil
 }
 
 // rebuildContent 根据版本记录重建完整文件内容。
@@ -298,6 +342,37 @@ func (w *Worker) rebuildFromDeltaChain(ctx context.Context, ver map[string]any) 
 // computeUnifiedDiff 使用 diffmatchpatch 生成统一格式的 diff。
 // 与 handler/diff.go:renderUnifiedDiff 共享 DiffLinesToChars + DiffMain 核心逻辑，
 // 但输出简化格式（无文件头时间戳、无 hunk 分割），适用于 AI 摘要场景。
+func truncateDiff(diff string, maxBytes int) string {
+	if len(diff) <= maxBytes {
+		return diff
+	}
+	// Binary search for the largest byte position ≤ maxBytes that falls on a rune boundary
+	lo, hi := 0, maxBytes
+	for lo < hi {
+		mid := (lo + hi + 1) / 2
+		// Find the end of the rune that contains byte position mid
+		runeEnd := mid
+		for runeEnd < len(diff) && (diff[runeEnd]&0xE0) == 0x80 {
+			runeEnd++
+		}
+		if runeEnd <= maxBytes {
+			lo = runeEnd
+		} else {
+			// Back up to start of this rune
+			runeStart := mid - 1
+			for runeStart > 0 && (diff[runeStart]&0xE0) == 0x80 {
+				runeStart--
+			}
+			hi = runeStart
+		}
+	}
+	cutoff := lo
+	if cutoff == 0 {
+		cutoff = len([]byte(string(rune([]rune(diff)[0]))))
+	}
+	return diff[:cutoff] + fmt.Sprintf("\n// ... truncated (%d total bytes)", len(diff))
+}
+
 func computeUnifiedDiff(oldContent, newContent string) string {
 	dmp := diffmatchpatch.New()
 	charsA, charsB, lineArray := dmp.DiffLinesToChars(oldContent, newContent)
@@ -398,6 +473,11 @@ func (w *Worker) processPendingSessions(ctx context.Context) {
 	defer rows.Close()
 
 	var changes []SessionChange
+	maxDiffSize := w.cfg.Triggers.MaxSessionDiff
+	if maxDiffSize <= 0 {
+		maxDiffSize = 8 * 1024
+	}
+
 	for rows.Next() {
 		var (
 			filePath  string
@@ -422,7 +502,7 @@ func (w *Worker) processPendingSessions(ctx context.Context) {
 
 		var diff string
 		if action != "delete" {
-			if d, getErr := w.getDiffForVersion(ctx, versionID, fileID); getErr == nil {
+			if d, getErr := w.getDiffForVersion(ctx, versionID, fileID, maxDiffSize); getErr == nil {
 				diff = d
 			}
 		} else {
@@ -436,6 +516,13 @@ func (w *Worker) processPendingSessions(ctx context.Context) {
 			Message:   message,
 			Timestamp: changedAt,
 		})
+	}
+
+	// Cap total changes to prevent context overflow
+	const maxChanges = 100
+	if len(changes) > maxChanges {
+		w.logger.Warn("session changes capped", "session_id", sessionSid, "total", len(changes), "capped", maxChanges)
+		changes = changes[:maxChanges]
 	}
 
 	if len(changes) == 0 {

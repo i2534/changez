@@ -230,7 +230,7 @@ func TestGetDiffForVersion_Create(t *testing.T) {
 
 	_, fileID, versionID := createTestVersion(t, database, bs, content, "create")
 
-	diff, err := w.getDiffForVersion(context.Background(), versionID, fileID)
+	diff, err := w.getDiffForVersion(context.Background(), versionID, fileID, 0)
 	require.NoError(t, err)
 
 	assert.Contains(t, diff, "[新文件创建]")
@@ -245,7 +245,7 @@ func TestGetDiffForVersion_Delete(t *testing.T) {
 	_, err := database.CreateVersion(context.Background(), fileID, "delete", nil, nil, &versionID, "delete", 1, "", "", "")
 	require.NoError(t, err)
 
-	diff, err := w.getDiffForVersion(context.Background(), versionID+1, fileID)
+	diff, err := w.getDiffForVersion(context.Background(), versionID+1, fileID, 0)
 	require.NoError(t, err)
 
 	assert.Equal(t, "[文件被删除]", diff)
@@ -256,7 +256,7 @@ func TestGetDiffForVersion_WrongFileID(t *testing.T) {
 
 	_, _, versionID := createTestVersion(t, database, bs, "content", "create")
 
-	_, err := w.getDiffForVersion(context.Background(), versionID, 99999)
+	_, err := w.getDiffForVersion(context.Background(), versionID, 99999, 0)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "does not belong to file")
 }
@@ -274,7 +274,7 @@ func TestGetDiffForVersion_Update(t *testing.T) {
 	_, err = database.CreateVersion(context.Background(), fileID, "blob", &blobHash, nil, &versionID, "update", 1, "", "", "")
 	require.NoError(t, err)
 
-	diff, err := w.getDiffForVersion(context.Background(), versionID+1, fileID)
+	diff, err := w.getDiffForVersion(context.Background(), versionID+1, fileID, 0)
 	require.NoError(t, err)
 
 	assert.NotContains(t, diff, "[新文件创建]")

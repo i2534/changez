@@ -29,9 +29,9 @@ export default function SourceBar({
                   style={{ width: `${pct}%` }}
                 />
               </div>
-              <span className="w-16 text-sm text-gray-300">
-                {count.toLocaleString()} ({pct}%)
-              </span>
+              <span className="w-16 text-sm text-gray-300 whitespace-nowrap">
+                 {count.toLocaleString()} ({pct}%)
+               </span>
             </div>
           );
         })}

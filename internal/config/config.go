@@ -49,10 +49,11 @@ type LogCfg struct {
 
 // AITriggerCfg AI 触发器配置。
 type AITriggerCfg struct {
-	OnSnapshot  bool `yaml:"on_snapshot"`  // 是否在快照时触发 AI 分析
-	BatchSize   int  `yaml:"batch_size"`   // 批量处理大小
-	MaxRetries  int  `yaml:"max_retries"`  // 最大重试次数
-	MaxDiffSize int  `yaml:"max_diff_size"` // 单次 diff 最大字节数，超过则截断（默认 64KB）
+	OnSnapshot     bool `yaml:"on_snapshot"`     // 快照后触发摘要
+	BatchSize      int  `yaml:"batch_size"`      // 批量处理大小
+	MaxRetries     int  `yaml:"max_retries"`     // 最大重试次数
+	MaxDiffSize    int  `yaml:"max_diff_size"`   // 单个 diff 最大字节数（summary），默认 64KB
+	MaxSessionDiff int  `yaml:"max_session_diff"` // 会话分析单个 diff 最大字节数，默认 8KB
 }
 
 // AICfg AI 模块配置。
@@ -151,10 +152,11 @@ func Defaults() Config {
 
 只输出报告内容，不要加任何前缀。`,
 			Triggers: AITriggerCfg{
-				OnSnapshot:  true,
-				BatchSize:   5,
-				MaxRetries:  3,
-				MaxDiffSize: 64 * 1024, // 64KB
+				OnSnapshot:     true,
+				BatchSize:      5,
+				MaxRetries:     3,
+				MaxDiffSize:    64 * 1024,
+				MaxSessionDiff: 8 * 1024,
 			},
 		},
 	}
