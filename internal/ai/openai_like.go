@@ -162,7 +162,11 @@ func (o *OpenAILike) doChatCompletion(ctx context.Context, prompt string) (strin
 		return "", fmt.Errorf("empty response from API")
 	}
 
-	return chatResp.Choices[0].Message.Content, nil
+	content := strings.TrimSpace(chatResp.Choices[0].Message.Content)
+	if content == "" {
+		return "", fmt.Errorf("empty content from API")
+	}
+	return content, nil
 }
 
 type SourceCount struct {

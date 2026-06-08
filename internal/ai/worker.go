@@ -182,6 +182,12 @@ func (w *Worker) processPending(ctx context.Context) {
 			continue
 		}
 
+		if strings.TrimSpace(summary) == "" {
+			w.logger.Warn("empty summary from provider, re-queuing", "version_id", versionID)
+			_ = w.markFailed(ctx, summaryID, "empty response from provider")
+			continue
+		}
+
 		if err := w.markCompleted(ctx, summaryID, summary); err != nil {
 			w.logger.Warn("mark completed failed", "summary_id", summaryID, "error", err)
 			continue
@@ -537,6 +543,12 @@ summary, err := w.provider.AnalyzeSession(ctx, changes)
 		return
 	}
 
+	if strings.TrimSpace(summary) == "" {
+		w.logger.Warn("empty session summary, marking failed", "session_id", sessionSid)
+		_ = w.markSessionFailed(ctx, sessionID, "empty response from provider")
+		return
+	}
+
 	if err := w.markSessionCompleted(ctx, sessionID, summary); err != nil {
 		w.logger.Warn("mark session completed failed", "session_id", sessionSid, "error", err)
 		_ = w.markSessionFailed(ctx, sessionID, fmt.Sprintf("mark completed failed: %v", err))
@@ -628,6 +640,12 @@ AND v.changed_at >= ? AND v.changed_at <= ?
 	if err != nil {
 		w.logger.Warn("analyze trends failed", "project", projectName, "error", err)
 		_ = w.markTrendFailed(ctx, trendID, err.Error())
+		return
+	}
+
+	if strings.TrimSpace(summary) == "" {
+		w.logger.Warn("empty trends summary, marking failed", "project", projectName)
+		_ = w.markTrendFailed(ctx, trendID, "empty response from provider")
 		return
 	}
 
