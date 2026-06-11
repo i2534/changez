@@ -2,9 +2,12 @@ package ai
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/changez/changez/internal/config"
@@ -130,82 +133,95 @@ func (w *Worker) processPending(ctx context.Context) {
 	}
 	defer rows.Close()
 
-	count := 0
-	for rows.Next() {
-		var (
-			summaryID  int64
-			versionID  int64
-			fileID     int64
-			filePath   string
-			rootPath   string
-			action     string
-			changedAt  string
-			sessionID  string
-			model      string
-			message    string
-			sourceName string
-		)
+	type pendingItem struct {
+		summaryID int64
+		versionID int64
+		fileID    int64
+		filePath  string
+		rootPath  string
+		action    string
+		changedAt string
+		sourceName string
+	}
 
-		if err := rows.Scan(&summaryID, &versionID, &fileID, &filePath, &rootPath, &action, &changedAt, &sessionID, &model, &message, &sourceName); err != nil {
+	var items []pendingItem
+	for rows.Next() {
+		var item pendingItem
+		if err := rows.Scan(&item.summaryID, &item.versionID, &item.fileID, &item.filePath, &item.rootPath, &item.action, &item.changedAt, new(sql.NullString), new(sql.NullString), new(sql.NullString), &item.sourceName); err != nil {
 			w.logger.Warn("scan pending summary failed", "error", err)
 			continue
 		}
+		items = append(items, item)
+	}
+	rows.Close()
 
-		diff, err := w.getDiffForVersion(ctx, versionID, fileID, 0)
-		if err != nil {
-			w.logger.Warn("get diff failed", "version_id", versionID, "error", err)
-			_ = w.markFailed(ctx, summaryID, err.Error())
-			continue
-		}
-
-		relPath := filePath
-		if len(filePath) > len(rootPath) && strings.HasPrefix(filePath, rootPath) {
-			relPath = filePath[len(rootPath):]
-			if len(relPath) > 0 && relPath[0] == '/' {
-				relPath = relPath[1:]
-			}
-		}
-
-		ctxInfo := SummaryContext{
-			FilePath:  relPath,
-			Action:    action,
-			Source:    sourceName,
-			Model:     model,
-			Message:   message,
-			Timestamp: changedAt,
-		}
-
-		summary, err := w.provider.Summarize(ctx, diff, ctxInfo)
-		if err != nil {
-			w.logger.Warn("summarize failed", "version_id", versionID, "error", err)
-			_ = w.markFailed(ctx, summaryID, err.Error())
-			continue
-		}
-
-		if strings.TrimSpace(summary) == "" {
-			w.logger.Warn("empty summary from provider, re-queuing", "version_id", versionID)
-			_ = w.markFailed(ctx, summaryID, "empty response from provider")
-			continue
-		}
-
-		if err := w.markCompleted(ctx, summaryID, summary); err != nil {
-			w.logger.Warn("mark completed failed", "summary_id", summaryID, "error", err)
-			continue
-		}
-
-		count++
-		logSummary := summary
-		if len([]rune(logSummary)) > 80 {
-			logSummary = string([]rune(logSummary)[:80])
-		}
-		w.logger.Info("summary generated",
-			"version_id", versionID,
-			"file", relPath,
-			"summary", logSummary,
-		)
+	if len(items) == 0 {
+		return
 	}
 
-	if count > 0 {
+	var wg sync.WaitGroup
+	var successCount int32
+
+	for _, item := range items {
+		wg.Add(1)
+		go func(item pendingItem) {
+			defer wg.Done()
+
+			diff, err := w.getDiffForVersion(ctx, item.versionID, item.fileID, 0)
+			if err != nil {
+				w.logger.Warn("get diff failed", "version_id", item.versionID, "error", err)
+				_ = w.markFailed(ctx, item.summaryID, err.Error())
+				return
+			}
+
+			relPath := item.filePath
+			if len(item.filePath) > len(item.rootPath) && strings.HasPrefix(item.filePath, item.rootPath) {
+				relPath = item.filePath[len(item.rootPath):]
+				if len(relPath) > 0 && relPath[0] == '/' {
+					relPath = relPath[1:]
+				}
+			}
+
+			ctxInfo := SummaryContext{
+				FilePath:  relPath,
+				Action:    item.action,
+				Source:    item.sourceName,
+				Timestamp: item.changedAt,
+			}
+
+			summary, err := w.provider.Summarize(ctx, diff, ctxInfo)
+			if err != nil {
+				w.logger.Warn("summarize failed", "version_id", item.versionID, "error", err)
+				_ = w.markFailed(ctx, item.summaryID, err.Error())
+				return
+			}
+
+			if strings.TrimSpace(summary) == "" {
+				w.logger.Warn("empty summary from provider", "version_id", item.versionID)
+				_ = w.markFailed(ctx, item.summaryID, "empty response from provider")
+				return
+			}
+
+			if err := w.markCompleted(ctx, item.summaryID, summary); err != nil {
+				w.logger.Warn("mark completed failed", "summary_id", item.summaryID, "error", err)
+				return
+			}
+
+			atomic.AddInt32(&successCount, 1)
+			logSummary := summary
+			if len([]rune(logSummary)) > 80 {
+				logSummary = string([]rune(logSummary)[:80])
+			}
+			w.logger.Info("summary generated",
+				"version_id", item.versionID,
+				"file", relPath,
+				"summary", logSummary,
+			)
+		}(item)
+	}
+
+	wg.Wait()
+	if count := int(successCount); count > 0 {
 		w.logger.Info("batch processing complete", "processed", count)
 	}
 }
