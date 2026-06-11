@@ -188,24 +188,23 @@ const createSidebarSlot = (
            <Show when={sidebarOpen()}>
                <box flexDirection="column" gap={0}>
                  <Show when={fileCount > 0}>
-                  <For each={files}>
-                    {(file) => (
-                      <box flexDirection="row">
-                        <text
-                          fg={theme.textMuted}
-                          wrapMode="none"
-                          flexGrow={3}
-                          flexShrink={1}
-                        >
-                          {"• "}
-                          {path.basename(file.path)}
-                        </text>
-                        <box flexGrow={1} justifyContent="flex-end">
-                          <text fg={theme.text}>@v{file.versionId}</text>
-                        </box>
-                      </box>
-                    )}
-                  </For>
+                   <For each={files}>
+                     {(file) => (
+                       <box flexDirection="row" justifyContent="space-between">
+                         <text
+                           fg={theme.textMuted}
+                           truncate
+                           wrapMode="none"
+                         >
+                           {"• "}
+                           {path.basename(file.path)}
+                         </text>
+                         <text fg={theme.text} flexShrink={0}>
+                           @v{file.versionId}
+                         </text>
+                       </box>
+                     )}
+                   </For>
                 </Show>
               </box>
             </Show>
@@ -235,7 +234,7 @@ const tui: TuiPlugin = async (
   const slotId = api.slots.register(createSidebarSlot(data, allFiles, error));
 
   api.lifecycle.onDispose(() => {
-    api.slots.unregister(slotId);
+    try { api.slots.unregister?.(slotId); } catch { /* slot auto-cleaned on dispose */ }
     if (pollInterval) clearInterval(pollInterval);
   });
 

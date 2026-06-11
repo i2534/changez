@@ -1,7 +1,8 @@
 // OpenCode Plugin: changez.server — 自动文件变更追踪 (Server 插件)
 //
 // 自包含单文件插件，仅依赖 Node.js 内置模块。
-// 主 session：在 tool.execute.after 中拦截文件修改工具（write/edit/multiedit/apply_patch/bash rm），
+// 主 session：监听 V2 EventStream（session.next.tool.called + session.next.tool.success）
+// 和 V1 tool.execute.after 兜底，拦截文件修改工具（write/edit/multiedit/apply_patch/bash rm），
 // 异步上报文件内容到 changez 服务。
 // 子 session：通过 event 钩子监听 session.diff 事件，追踪子 agent 的文件编辑。
 //
@@ -316,6 +317,175 @@ const createServerPlugin = async (
     log("debug", `project registration retry started (every 30s)`);
   }
 
+  // === V2 EventStream 追踪：Tool.Called → 缓存参数，Tool.Success → 上报快照 ===
+  const pendingToolCalls = new Map<string, {
+    tool: string;
+    input: Record<string, unknown>;
+    sessionID: string;
+    timestamp: number;
+  }>();
+  const processedCalls = new Set<string>();
+
+  const cleanupTimer = setInterval(() => {
+    const cutoff = Date.now() - 300_000;
+    for (const [key, val] of pendingToolCalls) {
+      if (val.timestamp < cutoff) pendingToolCalls.delete(key);
+    }
+    if (processedCalls.size > 2000) processedCalls.clear();
+  }, 60_000);
+
+  /** 从工具 args 中提取文件路径并上报快照（V1 tool.execute.after 和 V2 Tool.Success 共用） */
+  async function handleToolExecution(
+    rawTool: string,
+    args: Record<string, unknown> | undefined,
+    sessionID: string,
+    source: string,
+  ): Promise<void> {
+    if (!args) {
+      log("debug", `${source}: args is empty for tool=${rawTool}`);
+      return;
+    }
+    try {
+      const tool = rawTool.toLowerCase();
+      const model = sessionModels.get(sessionID);
+      if (!model) {
+        log("debug", `no model info for session ${sessionID}`);
+      }
+
+      log("debug", `${source} triggered: tool=${rawTool}`, {
+        tool: rawTool,
+        sessionID,
+        source,
+      });
+
+      let filePaths: FileTarget[] = [];
+
+      if (tool === "write" || tool === "edit") {
+        const fp = pickFilePath(args);
+        if (fp) filePaths.push({ path: fp, action: "update" });
+      } else if (tool === "multiedit") {
+        const paths = collectMultieditPaths(args);
+        filePaths = paths.map((p) => ({ path: p, action: "update" }));
+      } else if (tool === "apply_patch") {
+        const patchText =
+          (typeof args?.patchText === "string" ? args.patchText : "") ||
+          (typeof args?.patch === "string" ? args.patch : "");
+        filePaths = parsePatchTargets(patchText, log);
+      } else if (tool === "bash") {
+        const cmd =
+          (typeof args?.command === "string" ? args.command : "") ||
+          (typeof args?.bash_command === "string" ? args.bash_command : "");
+        const rmPaths = extractRmPaths(cmd);
+        filePaths = rmPaths.map((p) => ({ path: p, action: "delete" }));
+      }
+
+      if (filePaths.length === 0) {
+        log("debug", `${source}: no file targets for tool=${rawTool}`);
+        return;
+      }
+
+      log("info", `${source}: ${filePaths.length} file target(s) for tool=${rawTool}`, {
+        filePaths: filePaths.map(f => f.path),
+      });
+
+      const files: Array<{
+        path: string;
+        content: string;
+        action: string;
+      }> = [];
+
+      for (const { path: fp, action } of filePaths) {
+        try {
+          const absPath = path.isAbsolute(fp)
+            ? path.normalize(fp)
+            : path.normalize(path.join(projectRoot, fp));
+
+          if (action === "delete") {
+            files.push({ path: absPath, content: "", action });
+            continue;
+          }
+
+          const stat = fs.statSync(absPath);
+          if (stat.size > unifiedConfig.max_file_size) {
+            log("debug", `skip large file (>${unifiedConfig.max_file_size} bytes): ${absPath}`);
+            continue;
+          }
+          const content = fs.readFileSync(absPath, "utf8");
+          if (shouldSkipFile(absPath, excludes, content)) {
+            log("debug", `skip excluded file: ${absPath}`);
+            continue;
+          }
+          files.push({ path: absPath, content, action });
+        } catch (e) {
+          log("debug", `read failed for ${fp}: ${String(e)}`);
+        }
+      }
+
+      if (files.length === 0) return;
+
+      // Fire-and-forget: 不阻塞工具执行
+      void (async () => {
+        try {
+          const res = await httpRequest(unifiedConfig, "POST", "/api/snapshot", {
+            source: unifiedConfig.source,
+            sessionId: sessionID,
+            model: model ?? "",
+            files,
+          });
+
+          log("info", `snapshot sent: ${files.length} file(s)`, {
+            tool,
+            sessionID,
+            source,
+            httpStatus: res.status,
+          });
+
+          if (res.status >= 400) {
+            const body = res.json as { error?: { code?: string; message?: string } } | undefined;
+            const errorMsg = body?.error?.message ?? JSON.stringify(body);
+            if (res.status >= 500) {
+              log("warn", `snapshot server error: ${res.status} — ${errorMsg}`);
+            } else {
+              log("error", `snapshot client error: ${res.status} — ${errorMsg}`);
+            }
+            return;
+          }
+
+          const body = res.json as SnapshotResponse | undefined;
+          if (!body || !body.results) return;
+
+          const { results, summary } = body;
+
+          for (const item of results) {
+            switch (item.status) {
+              case "error":
+                log("warn", `snapshot error: ${item.path} — ${item.reason ?? "unknown"}`);
+                break;
+              case "unchanged":
+                log("debug", `unchanged: ${item.path}`);
+                break;
+              case "captured":
+                log("debug", `captured v${item.versionId}: ${item.path}`);
+                break;
+            }
+          }
+
+          log(
+            "info",
+            `snapshot summary: ${summary.captured} captured, ${summary.unchanged} unchanged, ${summary.errors} errors`,
+          );
+        } catch (e) {
+          log("warn", `snapshot request failed: ${String(e)}`);
+        }
+      })();
+    } catch (e) {
+      log("error", `${source} unhandled error: ${String(e)}`, {
+        tool: rawTool,
+        sessionID,
+      });
+    }
+  }
+
   return {
     "chat.message": async (
       input: { sessionID: string; model?: { providerID: string; modelID: string } },
@@ -331,6 +501,45 @@ const createServerPlugin = async (
 
     "event": async (input: { event: { type: string; properties: Record<string, unknown> } }): Promise<void> => {
       const { event } = input;
+
+      // V2 EventStream: 工具被调用 → 缓存参数（后续 Tool.Success 配对使用）
+      if (event.type === "session.next.tool.called") {
+        log("debug", `tool.called: ${event.properties.tool} (callID=${event.properties.callID})`, {
+          tool: event.properties.tool,
+          callID: event.properties.callID,
+          sessionID: event.properties.sessionID,
+        });
+        pendingToolCalls.set(event.properties.callID as string, {
+          tool: event.properties.tool as string,
+          input: event.properties.input as Record<string, unknown>,
+          sessionID: event.properties.sessionID as string,
+          timestamp: Date.now(),
+        });
+        return;
+      }
+
+      // V2 EventStream: 工具执行成功 → 关联缓存，上报快照
+      if (event.type === "session.next.tool.success") {
+        const callID = event.properties.callID as string;
+        if (processedCalls.has(callID)) {
+          log("debug", `tool.success: ${callID} already processed (dedup)`);
+          return;
+        }
+
+        const cached = pendingToolCalls.get(callID);
+        if (cached) {
+          log("debug", `tool.success: matching called found for callID=${callID}, processing...`);
+          processedCalls.add(callID);
+          handleToolExecution(cached.tool, cached.input, cached.sessionID, "session.next.tool.success");
+          pendingToolCalls.delete(callID);
+        } else {
+          log("warn", `tool.success: no matching called for callID=${callID} — session.next.tool.called may have been missed`, {
+            sessionID: event.properties.sessionID,
+            callID,
+          });
+        }
+        return;
+      }
 
       if (event.type === "session.created") {
         const info = event.properties.info as { id?: string; parentID?: string; directory?: string } | undefined;
@@ -445,146 +654,15 @@ const createServerPlugin = async (
       },
       _output: { title: string; output: string; metadata: unknown },
     ): Promise<void> => {
-      try {
-        const { tool: rawTool, sessionID } = input;
-        const tool = rawTool.toLowerCase();
-        const args = input.args;
-        const model = sessionModels.get(sessionID);
-        if (!model) {
-          log("debug", `no model info for session ${sessionID}`);
-        }
-
-        log("debug", `tool.execute.after triggered: tool=${rawTool}`, {
-          tool: rawTool,
-          sessionID,
-          callID: input.callID,
-        });
-
-        let filePaths: FileTarget[] = [];
-
-        if (tool === "write" || tool === "edit") {
-          const fp = pickFilePath(args);
-          if (fp) filePaths.push({ path: fp, action: "update" });
-        } else if (tool === "multiedit") {
-          const paths = collectMultieditPaths(args);
-          filePaths = paths.map((p) => ({ path: p, action: "update" }));
-        } else if (tool === "apply_patch") {
-          const patchText =
-            (typeof args?.patchText === "string" ? args.patchText : "") ||
-            (typeof args?.patch === "string" ? args.patch : "");
-          filePaths = parsePatchTargets(patchText, log);
-        } else if (tool === "bash") {
-          const cmd =
-            (typeof args?.command === "string" ? args.command : "") ||
-            (typeof args?.bash_command === "string" ? args.bash_command : "");
-          const rmPaths = extractRmPaths(cmd);
-          filePaths = rmPaths.map((p) => ({ path: p, action: "delete" }));
-        }
-
-        if (filePaths.length === 0) {
-          log("debug", `tool.execute.after: no file targets for tool=${rawTool}`);
-          return;
-        }
-
-        log("info", `tool.execute.after: ${filePaths.length} file target(s) for tool=${rawTool}`, {
-          filePaths: filePaths.map(f => f.path),
-        });
-
-        const files: Array<{
-          path: string;
-          content: string;
-          action: string;
-        }> = [];
-
-        for (const { path: fp, action } of filePaths) {
-          try {
-            const absPath = path.isAbsolute(fp)
-              ? path.normalize(fp)
-              : path.normalize(path.join(projectRoot, fp));
-
-            if (action === "delete") {
-              files.push({ path: absPath, content: "", action });
-              continue;
-            }
-
-            const stat = fs.statSync(absPath);
-            if (stat.size > unifiedConfig.max_file_size) {
-              log("debug", `skip large file (>${unifiedConfig.max_file_size} bytes): ${absPath}`);
-              continue;
-            }
-            const content = fs.readFileSync(absPath, "utf8");
-            if (shouldSkipFile(absPath, excludes, content)) {
-              log("debug", `skip excluded file: ${absPath}`);
-              continue;
-            }
-            files.push({ path: absPath, content, action });
-          } catch (e) {
-            log("debug", `read failed for ${fp}: ${String(e)}`);
-          }
-        }
-
-        if (files.length === 0) return;
-
-        // Fire-and-forget: don't block the tool execution
-        void (async () => {
-          try {
-            const res = await httpRequest(unifiedConfig, "POST", "/api/snapshot", {
-              source: unifiedConfig.source,
-              sessionId: sessionID,
-              model: model ?? "",
-              files,
-            });
-
-            log("info", `snapshot sent: ${files.length} file(s)`, {
-              tool,
-              sessionID,
-              httpStatus: res.status,
-            });
-
-            if (res.status >= 400) {
-              const body = res.json as { error?: { code?: string; message?: string } } | undefined;
-              const errorMsg = body?.error?.message ?? JSON.stringify(body);
-              if (res.status >= 500) {
-                log("warn", `snapshot server error: ${res.status} — ${errorMsg}`);
-              } else {
-                log("error", `snapshot client error: ${res.status} — ${errorMsg}`);
-              }
-              return;
-            }
-
-            const body = res.json as SnapshotResponse | undefined;
-            if (!body || !body.results) return;
-
-            const { results, summary } = body;
-
-            for (const item of results) {
-              switch (item.status) {
-                case "error":
-                  log("warn", `snapshot error: ${item.path} — ${item.reason ?? "unknown"}`);
-                  break;
-                case "unchanged":
-                  log("debug", `unchanged: ${item.path}`);
-                  break;
-                case "captured":
-                  log("debug", `captured v${item.versionId}: ${item.path}`);
-                  break;
-              }
-            }
-
-            log(
-              "info",
-              `snapshot summary: ${summary.captured} captured, ${summary.unchanged} unchanged, ${summary.errors} errors`,
-            );
-          } catch (e) {
-            log("warn", `snapshot request failed: ${String(e)}`);
-          }
-        })();
-      } catch (e) {
-        log("error", `tool.execute.after unhandled error: ${String(e)}`, {
-          tool: input.tool,
-          sessionID: input.sessionID,
-        });
+      // V1 路径兜底：V2 EventStream 事件可能已先处理，防重复
+      if (processedCalls.has(input.callID)) {
+        log("debug", `tool.execute.after: ${input.callID} already processed by V2 (dedup)`);
+        return;
       }
+      processedCalls.add(input.callID);
+
+      log("info", `tool.execute.after: V1 fallback for tool=${input.tool} (callID=${input.callID})`);
+      await handleToolExecution(input.tool, input.args, input.sessionID, "tool.execute.after");
     },
   };
 };
