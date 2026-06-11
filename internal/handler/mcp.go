@@ -124,6 +124,9 @@ func (h *Handler) snapshotSingleFile(ctx context.Context, filePath, action, cont
 			if storage.ContentHash(prevContent) == contentHash {
 				return SnapshotResult{Path: filePath, Status: "unchanged"}
 			}
+		case "delete":
+			// 文件此前被软删除，视同无上一版本，走新建 blob 路径。
+			latestVer = nil
 		}
 	}
 
