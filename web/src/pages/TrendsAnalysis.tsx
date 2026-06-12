@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { getAITrends } from "../api/client";
 import { TrendsResponse } from "../api/types";
@@ -50,6 +50,22 @@ export default function TrendsAnalysis() {
     fetchData();
   }, [fetchData]);
 
+  // Poll for AI analysis completion while pending
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => {
+    if (data?.status === "pending") {
+      pollingRef.current = setInterval(() => {
+        fetchData();
+      }, 3000);
+    }
+    return () => {
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
+    };
+  }, [data?.status, fetchData]);
+
   const handleQuickRange = (range: "7" | "30" | "custom") => {
     setQuickRange(range);
     if (range === "7") {
@@ -96,7 +112,7 @@ export default function TrendsAnalysis() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <button
-            onClick={() => navigate(`/projects/${encodeURIComponent(projectName)}`)}
+            onClick={() => navigate(`/projects/${encodeURIComponent(projectName)}/files`)}
             className="rounded-lg bg-gray-800 px-3 py-1.5 text-sm text-gray-300 transition-colors hover:bg-gray-700"
           >
             {t("trends.back")}

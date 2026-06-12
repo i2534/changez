@@ -189,6 +189,13 @@ func (w *Worker) processPending(ctx context.Context) {
 				Timestamp: item.changedAt,
 			}
 
+			if isTrivialDiff(diff) {
+				w.logger.Info("skipped trivial diff", "version_id", item.versionID, "file", relPath)
+				_ = w.markCompleted(ctx, item.summaryID, "微小变更")
+				atomic.AddInt32(&successCount, 1)
+				return
+			}
+
 			summary, err := w.provider.Summarize(ctx, diff, ctxInfo)
 			if err != nil {
 				w.logger.Warn("summarize failed", "version_id", item.versionID, "error", err)
@@ -393,6 +400,39 @@ func truncateDiff(diff string, maxBytes int) string {
 		cutoff = len([]byte(string(rune([]rune(diff)[0]))))
 	}
 	return diff[:cutoff] + fmt.Sprintf("\n// ... truncated (%d total bytes)", len(diff))
+}
+
+// isTrivialDiff 判断 diff 是否过于微小，不值得送 LLM 分析。
+// 文件创建和删除不视为微小变更。只有更新操作中仅含空白/换行/极少量代码变动的才跳过。
+func isTrivialDiff(diff string) bool {
+	// 文件创建/删除有特殊标记，始终送 LLM
+	if strings.Contains(diff, "[新文件创建]") || strings.Contains(diff, "[文件被删除]") {
+		return false
+	}
+
+	if len(strings.TrimSpace(diff)) < 50 {
+		return true
+	}
+
+	lines := strings.Split(diff, "\n")
+	meaningful := 0
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || trimmed == "..." {
+			continue
+		}
+		// Skip unified diff headers
+		if trimmed == "--- original" || trimmed == "+++ modified" {
+			continue
+		}
+		if strings.HasPrefix(line, "+") || strings.HasPrefix(line, "-") {
+			content := strings.TrimSpace(line[1:])
+			if content != "" {
+				meaningful++
+			}
+		}
+	}
+	return meaningful < 3
 }
 
 func computeUnifiedDiff(oldContent, newContent string) string {

@@ -130,7 +130,7 @@ func TestE2E_SnapshotToSummary_FullFlow(t *testing.T) {
 	assert.Contains(t, completedSummary1, "test.go")
 
 	// ===== 6. Test Update Flow =====
-	modifiedContent := "package main\n\nfunc main() {}\n"
+	modifiedContent := "package main\n\nfunc main() {\n\tfmt.Println(\"hello\")\n\tfmt.Println(\"world\")\n\tfor i := 0; i < 10; i++ {\n\t\tfmt.Println(i)\n\t}\n}\n"
 	hash2, err := bs.Store([]byte(modifiedContent))
 	require.NoError(t, err)
 

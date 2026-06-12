@@ -34,9 +34,8 @@ export default function LoginModal({
     try {
       const res = await api("/health");
       if (res.ok) {
-        setTokenInput("");
-        setError("");
         onClose();
+        window.location.reload();
       } else {
         setError(t("login.invalid_token"));
       }
