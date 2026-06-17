@@ -12,7 +12,6 @@ data/
 .opencode/
 .codegraph/
 .omo/
-/AGENTS.md
 
 # IDE
 .vscode/
@@ -30,10 +29,15 @@ data/
 Thumbs.db
 
 # Web build
-web/node_modules/
+**/node_modules/
 web/dist/
 !web/dist/.gitkeep
+web/playwright-report
+web/test-results
 
 # Reasonix
 .reasonix/
 /REASONIX.md
+
+# Golang
+vendor/

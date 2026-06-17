@@ -15,9 +15,9 @@ function makeEntry(overrides = {}) {
     timestamp: new Date('2024-06-01T10:00:00Z').toISOString(),
     source: 'opencode',
     action: 'update' as const,
-    sessionId: null,
-    model: null,
-    message: null,
+    sessionId: undefined,
+    model: undefined,
+    message: undefined,
     ...overrides,
   }
 }
@@ -70,7 +70,7 @@ function defaultContext(overrides = {}): TimelineContextValue {
 function renderRow(rowProps = defaultRowProps, contextOverrides = {}) {
   return render(
     <TimelineProvider value={defaultContext(contextOverrides)}>
-      <TimelineRow index={0} style={style} {...rowProps} />
+      <TimelineRow index={0} style={style} ariaAttributes={{ "aria-posinset": 1, "aria-setsize": 1, role: "listitem" }} {...rowProps} />
     </TimelineProvider>
   )
 }

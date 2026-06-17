@@ -1,6 +1,6 @@
 import { createContext, useContext, type ReactNode } from "react";
 
-interface TimelineContextValue {
+export interface TimelineContextValue {
   expandedId: number | null;
   setExpandedId: (id: number | null) => void;
   contentVersionId: number | null;

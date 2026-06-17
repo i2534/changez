@@ -22,7 +22,7 @@ describe('DiffViewer', () => {
 
   it('renders version header', () => {
     render(<DiffViewer diff="diff content" fromVersion={3} toVersion={5} />)
-    expect(screen.getByText((content, el) => {
+    expect(screen.getByText((_content, el) => {
       if (!el || el.tagName !== 'SPAN') return false
       return el.textContent?.includes('v3') && el.textContent?.includes('v5')
     })).toBeTruthy()
