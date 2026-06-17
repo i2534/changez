@@ -62,9 +62,24 @@ export const LANG_MAP: Record<string, string> = {
   ".css": "css",
   ".html": "markup",
   ".xml": "markup",
+  ".svelte": "markup",
+  ".jsonc": "json",
+  ".mdc": "markup",
+  ".kts": "kotlin",
+};
+
+const BASENAME_MAP: Record<string, string> = {
+  Makefile: "bash",
+  makefile: "bash",
+  Dockerfile: "docker",
+  dockerfile: "docker",
+  "go.mod": "go",
+  "go.sum": "go",
 };
 
 export function detectLanguage(filePath: string): string | null {
   const ext = filePath.slice(filePath.lastIndexOf("."));
-  return LANG_MAP[ext] || null;
+  if (LANG_MAP[ext]) return LANG_MAP[ext];
+  const base = filePath.split("/").pop() || filePath;
+  return BASENAME_MAP[base] || null;
 }
